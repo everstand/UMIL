@@ -69,3 +69,5 @@ booktitle={CVPR},
 year={2023}
 }
 ```
+# 生成视频标签列表
+python src/make_splits.py --dataset all
