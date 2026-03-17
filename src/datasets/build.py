@@ -237,9 +237,10 @@ class BaseDataset(Dataset, metaclass=ABCMeta):
 
 
 class FrameDataset(BaseDataset):
-    def __init__(self, ann_file, pipeline, labels_file, start_index=0, **kwargs):
+    def __init__(self, ann_file, pipeline, labels_file, start_index=0, train_keys=None,**kwargs):
         # 魔改：labels_file 现在传进来的是 .npy 字典文件的路径
         self.labels_dict = np.load(labels_file, allow_pickle=True).item()
+        self.train_keys = train_keys
         super().__init__(ann_file, pipeline, start_index=start_index, **kwargs)
         self.labels_file = labels_file
 
@@ -259,6 +260,13 @@ class FrameDataset(BaseDataset):
                 filename = line.strip()
                 if not filename:
                     continue
+                
+                if self.train_keys is not None:
+                    # 提取干净的视频名，例如 '/data/video_1.mp4' -> 'video_1'
+                    vid_name = os.path.basename(path).split('.')[0]
+                    # 如果这个视频不在官方划分的折(Split)里，直接跳过！
+                    if vid_name not in self.train_keys:
+                        continue
                 
                 # 获取视频ID (如: video_1)
                 video_id = osp.splitext(osp.basename(filename))[0]
@@ -385,7 +393,7 @@ def mmcv_collate(batch, samples_per_gpu=1):
     else:
         return default_collate(batch)
 
-def build_dataloader(logger, config):
+def build_dataloader(logger, config, train_keys=None):
     scale_resize = int(256 / 224 * config.DATA.INPUT_SIZE)
 
     # 魔改：加入 DecordInit 和 DecordDecode，不用图片，直接读视频！
@@ -419,7 +427,8 @@ def build_dataloader(logger, config):
         
     train_data = FrameDataset(ann_file=config.DATA.TRAIN_FILE, data_prefix=config.DATA.ROOT,
                               filename_tmpl=config.DATA.FILENAME_TMPL, labels_file=config.DATA.LABEL_LIST,
-                              pipeline=train_pipeline, pipeline_=train_pipeline_S)
+                              pipeline=train_pipeline, pipeline_=train_pipeline_S,
+                              train_keys=train_keys)
     
     num_tasks = dist.get_world_size() if dist.is_initialized() else 1
     global_rank = dist.get_rank() if dist.is_initialized() else 0

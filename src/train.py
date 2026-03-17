@@ -4,6 +4,11 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # 将根目录强行加入 Python 的雷达扫描路径中
 if BASE_DIR not in sys.path:
     sys.path.append(BASE_DIR)
+    # 🌟 引入顶会必备的实验追踪神器 TensorBoard
+from torch.utils.tensorboard import SummaryWriter
+
+# 引入我们昨天写好的评测器 (用于边训练边验证)
+from evaluate import evaluate  # 假设你可以把 evaluate.py 里的逻辑抽成函数调用，或者用 subprocess 调用
 import time
 import random
 import argparse
@@ -51,13 +56,37 @@ def parse_option():
     parser.add_argument('--w-smooth', default=0.01, type=float)
     parser.add_argument('--w-sparse', default=0.005, type=float)
     parser.add_argument('--w-mil', default=1.0, type=float)
+    # 🌟 [新增参数]：强制要求传入官方 Split
+    parser.add_argument('--split_file', type=str, required=True, help='官方划分文件, 如 splits/tvsum.yml')
+    parser.add_argument('--split_id', type=int, default=0, help='当前跑的是第几折 (0-4)')
+    parser.add_argument('--dataset', type=str, required=True, choices=['summe', 'tvsum'], help='数据集名字')
 
     args = parser.parse_args()
     config = get_config(args)
     return args, config
 
 def main(config):
-    train_data, val_data, _, train_loader, val_loader, _, _, _ = build_dataloader(logger, config)
+    # ---------------------------------------------------------
+    # 🌟 1. 解析官方 YAML 划分文件
+    # ---------------------------------------------------------
+    print(f"📖 正在加载官方数据划分: {args.split_file} (Split {args.split_id})")
+    with open(args.split_file, 'r') as f:
+        all_splits = yaml.safe_load(f)
+        current_split = all_splits[args.split_id]
+        
+    train_keys = current_split['train_keys']
+    test_keys = current_split['test_keys']
+    print(f"✅ 严格控制变量: 训练集 {len(train_keys)} 个视频，测试集 {len(test_keys)} 个视频")
+    
+    # ---------------------------------------------------------
+    # 🌟 2. 初始化 TensorBoard 和带有名单的 DataLoader
+    # ---------------------------------------------------------
+    log_dir = os.path.join(config.OUTPUT, f"tensorboard_logs/split_{args.split_id}")
+    writer = SummaryWriter(log_dir=log_dir)
+    
+    # 🌟 核心：这里把 train_keys 塞进 DataLoader 里了！
+    # ⚠️ 请注意等号左边的变量名，一定要照抄你原本文件里的名字！！！
+    train_loader, train_loader_umil, val_loader = build_dataloader(logger, config, train_keys=train_keys)
     
     # 强行传入 None 触发自动下载预训练模型
     model, _ = xclip.load(None, config.MODEL.ARCH, 
@@ -90,19 +119,50 @@ def main(config):
     logger.info(f"Loaded {len(text_prompts)} action prompts.")
     text_labels = clip.tokenize(text_prompts).cuda()
 
-    for epoch in range(start_epoch, config.TRAIN.EPOCHS):
-        if dist.is_initialized() and hasattr(train_loader.sampler, 'set_epoch'):
-            train_loader.sampler.set_epoch(epoch)
+    # ---------------------------------------------------------
+    # 🌟 顶会级带验证的训练主循环 (Training Loop with Auto-Validation)
+    # ---------------------------------------------------------
+    best_f1_score = 0.0
+    
+    for epoch in range(config.TRAIN.START_EPOCH, config.TRAIN.EPOCHS):
+        model.train()
         
-        # 传入 scaler
-        mil_one_epoch(epoch, model, optimizer, lr_scheduler, train_loader, text_labels, config, scaler, use_amp)
-
-        if epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1):
-            out_path = os.path.join(config.OUTPUT, f'summary_epoch_{epoch}.pkl')
-            validate(val_loader, text_labels, model, config, out_path)
-
-            if not dist.is_initialized() or dist.get_rank() == 0:
-                epoch_saving(config, epoch, model.module if dist.is_initialized() else model, 0.0, optimizer, optimizer, lr_scheduler, lr_scheduler, logger, config.OUTPUT, False)
+        # 1. 跑一轮训练 (这里保留你原来的 train_one_epoch 逻辑)
+        train_loss = train_one_epoch(
+            config, model, data_loader_train, optimizer, epoch, lr_scheduler, 
+            criterion, args.accumulation_steps, logger
+        ) # (注意：这里的参数列表如果你原来是其他的，请保持你原来的传参方式)
+        
+        # 实时将 Loss 写入 TensorBoard
+        writer.add_scalar('Loss/Train', train_loss, epoch)
+        
+        # 2. 跑一轮验证 (Auto-Validation)
+        print(f"\n🔍 正在验证 Epoch {epoch} 的模型泛化能力...")
+        
+        # 保存临时权重用于测试
+        temp_ckpt_path = os.path.join(config.OUTPUT, "temp_checkpoint.pth")
+        epoch_saving(config, epoch, model, 0.0, optimizer, lr_scheduler, logger, config.OUTPUT, is_highest=False)
+        # 将刚刚保存的 epoch_xx.pth 重命名为临时文件
+        import shutil
+        shutil.move(os.path.join(config.OUTPUT, f"ckpt_epoch_{epoch}.pth"), temp_ckpt_path)
+        
+        # 🌟 调用评价器，并传入 test_keys 进行绝对隔离测试！
+        current_f1 = evaluate(config, args.dataset, temp_ckpt_path, test_keys=test_keys)
+        
+        # 🌟 将 F1 分数写入 TensorBoard
+        writer.add_scalar('Metric/F1_Score', current_f1, epoch)
+        
+        # 3. 🌟 核心：只拦截并保存最高分的模型
+        if current_f1 > best_f1_score:
+            best_f1_score = current_f1
+            best_ckpt_name = os.path.join(config.OUTPUT, f"best_model_split{args.split_id}.pth")
+            
+            # 覆盖保存最优模型
+            shutil.copyfile(temp_ckpt_path, best_ckpt_name)
+            print(f"🎉 发现新的最好成绩! F1: {best_f1_score:.4f}，已保存至 {best_ckpt_name}")
+            
+    writer.close()
+    print(f"🏆 Split {args.split_id} 训练彻底结束！历史最高 F1: {best_f1_score:.4f}")
 
 def mil_one_epoch(epoch, model, optimizer, lr_scheduler, train_loader, text_labels, config, scaler, use_amp):
     model.train()

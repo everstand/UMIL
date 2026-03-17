@@ -122,7 +122,7 @@ def predict_video_scores(model, video_path, text_tokens, device, config):
     return np.array(frame_scores)
 
 
-def evaluate(config, dataset_name, checkpoint_path):
+def evaluate(config, dataset_name, checkpoint_path, test_keys=None):
     """
     主评估流水线 (对标 dsnet evaluate.py)
     """
@@ -164,6 +164,8 @@ def evaluate(config, dataset_name, checkpoint_path):
         keys = list(h5_data.keys())
         
         for key in tqdm(keys, desc=f"Evaluating {dataset_name.upper()}", ncols=100):
+            if test_keys is not None and key not in test_keys:
+                continue
             try:
                 n_frames_h5 = h5_data[key]['n_frames'][()]
                 video_path = None
@@ -198,7 +200,10 @@ def evaluate(config, dataset_name, checkpoint_path):
                 # --- C. 推理与评分 (解耦模块) ---
                 frame_scores = predict_video_scores(model, video_path, text_tokens, device, config)
                 machine_summary = generate_summary(frame_scores, cps, n_frames_h5, nfps, positions)
-                f1 = evaluate_summary(machine_summary, user_summary, eval_metric='avg')
+                
+                # 🌟 [关键修正]：严格遵守学术界公平比较铁律，动态切换打分机制！
+                eval_metric = 'avg' if dataset_name == 'tvsum' else 'max'
+                f1 = evaluate_summary(machine_summary, user_summary, eval_metric=eval_metric)
                 
                 # 更新计分板
                 f1_meter.update(f1)

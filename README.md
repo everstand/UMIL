@@ -69,5 +69,21 @@ booktitle={CVPR},
 year={2023}
 }
 ```
-# 生成视频标签列表
+# 第 1 步：准备数据列表与伪标签
+
+# 生成数据集划分列表
 python src/make_splits.py --dataset all
+# 生成 CLIP 弱监督伪标签
+python src/generate_pseudo_labels.py
+
+# 第 2 步：一键启动训练
+
+# TVSum 数据集上训练
+python src/train.py --config configs/tvsum/32_5.yaml
+# SumMe 数据集上训练
+python src/train.py --config configs/summe/32_5.yaml
+# 多卡分布式训练 (Multi-GPU)
+# 注意：跑之前可能需要把脚本里的 main_umil.py 改成 src/train.py
+bash scripts/evaluate_summarizer.sh 2 configs/tvsum/32_5.yaml
+# F1 分数
+python src/evaluate.py --dataset tvsum --config configs/tvsum/32_5.yaml --ckpt exp/ckpt_epoch_49.pth
