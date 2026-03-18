@@ -67,16 +67,133 @@ def parse_option():
 
 def main(config):
     # ---------------------------------------------------------
-    # 🌟 1. 解析官方 YAML 划分文件
+    # 🌟 1. 解析官方 YAML 划分文件 (带 H5 盲匹配翻译器 + 终极诊断)
     # ---------------------------------------------------------
+    import yaml
+    import h5py
+    import os
+    import decord
+    import cv2
+    
     print(f"📖 正在加载官方数据划分: {args.split_file} (Split {args.split_id})")
     with open(args.split_file, 'r') as f:
         all_splits = yaml.safe_load(f)
         current_split = all_splits[args.split_id]
         
-    train_keys = current_split['train_keys']
-    test_keys = current_split['test_keys']
+    raw_train_keys = current_split['train_keys']
+    raw_test_keys = current_split['test_keys']
+    
+    print(f"🕵️ 诊断: YAML 文件里的原始 Key 长什么样？ 样例: {raw_train_keys[:3]}")
+    
+    # 确定路径
+    if args.dataset == 'summe':
+        h5_path = "data/eccv16_datasets/eccv16_dataset_summe_google_pool5.h5"
+        video_dir = "data/SumMe/videos"
+    else:
+        h5_path = "data/eccv16_datasets/eccv16_dataset_tvsum_google_pool5.h5"
+        video_dir = "data/TVSum/videos"
+        
+    print(f"🔤 正在通过户口本 {h5_path} 翻译真实视频文件名...")
+    
+    # 🌟 建立物理视频的帧数指纹库
+    fingerprints = {}
+    if os.path.exists(video_dir):
+        video_files = [f for f in os.listdir(video_dir) if f.endswith(('.mp4', '.avi', '.webm', '.mkv'))]
+        for fname in video_files:
+            vpath = os.path.join(video_dir, fname)
+            vid_id = fname.split('.')[0]
+            try:
+                vr = decord.VideoReader(vpath)
+                fingerprints[vid_id] = len(vr)
+            except Exception:
+                try:
+                    cap = cv2.VideoCapture(vpath)
+                    if cap.isOpened():
+                        fingerprints[vid_id] = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                        cap.release()
+                except Exception:
+                    pass
+    print(f"🎯 成功提取到 {len(fingerprints)} 个视频的指纹库！")
+
+    train_keys = []
+    test_keys = []
+    
+    def translate_keys(raw_keys, out_list):
+        with h5py.File(h5_path, 'r') as h5_data:
+            h5_keys = list(h5_data.keys())
+            for k in raw_keys:
+                k = str(k).strip().split('/')[-1]
+                
+                # 🛡️ 容错 1：如果 YAML 里已经是真实的视频名了 (在物理文件夹里能找到)，直接放行！
+                if k in fingerprints:
+                    out_list.append(k)
+                    continue
+                
+                # 🛡️ 容错 2：如果在 H5 里找不到，说明 YAML 格式和 H5 彻底对不上
+                if k not in h5_data:
+                    print(f"⚠️ 警告: '{k}' 既不是真实视频名，也不在 H5 字典中 (H5包含 {h5_keys[:3]}...)")
+                    continue
+                
+                vname = None
+                if 'video_name' in h5_data[k]:
+                    vname_raw = h5_data[k]['video_name'][()]
+                    vname = vname_raw.item().decode('utf-8') if hasattr(vname_raw, 'item') else str(vname_raw.decode('utf-8'))
+                
+                if not vname:
+                    n_frames_h5 = h5_data[k]['n_frames'][()]
+                    min_diff = float('inf')
+                    for fname, vlen in fingerprints.items():
+                        diff = abs(vlen - n_frames_h5)
+                        if diff < min_diff:
+                            min_diff = diff
+                            vname = fname
+                
+                if vname:
+                    out_list.append(vname)
+                else:
+                    print(f"⚠️ 警告: '{k}' 盲匹配失败，极大概率是指纹库提取数为 0！")
+
+    translate_keys(raw_train_keys, train_keys)
+    translate_keys(raw_test_keys, test_keys)
+            
     print(f"✅ 严格控制变量: 训练集 {len(train_keys)} 个视频，测试集 {len(test_keys)} 个视频")
+    print(f"🔍 翻译样例: {train_keys[:3]}") 
+    # ---------------------------------------------------------
+
+    
+    def translate_keys(raw_keys, out_list):
+        with h5py.File(h5_path, 'r') as h5_data:
+            for k in raw_keys:
+                k = str(k).strip()
+                if k not in h5_data:
+                    continue
+                
+                vname = None
+                # 尝试 A: 正常读取 video_name (适用于 SumMe)
+                if 'video_name' in h5_data[k]:
+                    vname_raw = h5_data[k]['video_name'][()]
+                    vname = vname_raw.item().decode('utf-8') if hasattr(vname_raw, 'item') else str(vname_raw.decode('utf-8'))
+                
+                # 尝试 B: 帧数指纹盲匹配 (适用于 TVSum 这种缺失名字的坑爹数据)
+                if not vname:
+                    n_frames_h5 = h5_data[k]['n_frames'][()]
+                    min_diff = float('inf')
+                    for fname, vlen in fingerprints.items():
+                        diff = abs(vlen - n_frames_h5)
+                        if diff < min_diff:
+                            min_diff = diff
+                            vname = fname
+                
+                if vname:
+                    out_list.append(vname)
+
+    # 执行翻译
+    translate_keys(raw_train_keys, train_keys)
+    translate_keys(raw_test_keys, test_keys)
+            
+    print(f"✅ 严格控制变量: 训练集 {len(train_keys)} 个视频，测试集 {len(test_keys)} 个视频")
+    print(f"🔍 翻译样例: {train_keys[:3]}") 
+    # ---------------------------------------------------------
     
     # ---------------------------------------------------------
     # 🌟 2. 初始化 TensorBoard 和带有名单的 DataLoader
@@ -86,7 +203,8 @@ def main(config):
     
     # 🌟 核心：这里把 train_keys 塞进 DataLoader 里了！
     # ⚠️ 请注意等号左边的变量名，一定要照抄你原本文件里的名字！！！
-    train_loader, train_loader_umil, val_loader = build_dataloader(logger, config, train_keys=train_keys)
+    # 🌟 核心：精确接住 8 个返回值，丢弃不需要的重复项
+    _, _, _, train_loader, val_loader, _, _, train_loader_umil = build_dataloader(logger, config, train_keys=train_keys)
     
     # 强行传入 None 触发自动下载预训练模型
     model, _ = xclip.load(None, config.MODEL.ARCH, 
@@ -96,6 +214,10 @@ def main(config):
                          use_checkpoint=config.TRAIN.USE_CHECKPOINT, 
                          use_cache=config.MODEL.FIX_TEXT,
                          logger=logger)
+    # 🌟 显存优化：冻结视觉编码器，只练摘要层
+    for param in model.visual.parameters():
+        param.requires_grad = False
+    print("❄️  已冻结 CLIP 视觉编码器，显存压力已降低！")
     model = model.cuda()
 
     optimizer, _ = build_optimizer(config, model)
@@ -124,14 +246,21 @@ def main(config):
     # ---------------------------------------------------------
     best_f1_score = 0.0
     
-    for epoch in range(config.TRAIN.START_EPOCH, config.TRAIN.EPOCHS):
+    for epoch in range(start_epoch, config.TRAIN.EPOCHS):
         model.train()
         
-        # 1. 跑一轮训练 (这里保留你原来的 train_one_epoch 逻辑)
-        train_loss = train_one_epoch(
-            config, model, data_loader_train, optimizer, epoch, lr_scheduler, 
-            criterion, args.accumulation_steps, logger
-        ) # (注意：这里的参数列表如果你原来是其他的，请保持你原来的传参方式)
+        # 🌟 1. 跑一轮真正的 MIL 训练 (替换成你真实的函数和真实的 Dataloader)
+        train_loss = mil_one_epoch(
+            epoch=epoch, 
+            model=model, 
+            optimizer=optimizer, 
+            lr_scheduler=lr_scheduler, 
+            train_loader=train_loader_umil,  # 传入真实的 dataloader
+            text_labels=text_labels, 
+            config=config, 
+            scaler=scaler, 
+            use_amp=use_amp
+        )
         
         # 实时将 Loss 写入 TensorBoard
         writer.add_scalar('Loss/Train', train_loss, epoch)
@@ -232,6 +361,7 @@ def mil_one_epoch(epoch, model, optimizer, lr_scheduler, train_loader, text_labe
                 f'lr {lr:.6f}\t'
                 f'Tot Loss {tot_loss_meter.val:.4f} ({tot_loss_meter.avg:.4f})\t'
                 f'MIL Loss {mil_loss_meter.val:.4f} ({mil_loss_meter.avg:.4f})')
+    return tot_loss_meter.avg
 
 @torch.no_grad()
 def validate(val_loader, text_labels, model, config, out_path):

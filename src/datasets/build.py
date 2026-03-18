@@ -263,7 +263,7 @@ class FrameDataset(BaseDataset):
                 
                 if self.train_keys is not None:
                     # 提取干净的视频名，例如 '/data/video_1.mp4' -> 'video_1'
-                    vid_name = os.path.basename(path).split('.')[0]
+                    vid_name = os.path.basename(filename).split('.')[0]
                     # 如果这个视频不在官方划分的折(Split)里，直接跳过！
                     if vid_name not in self.train_keys:
                         continue
