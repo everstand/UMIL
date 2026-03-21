@@ -125,22 +125,35 @@ class AverageMeter:
         self.avg = self.sum / self.count
 
 
-def epoch_saving(config, epoch, model, max_accuracy, optimizer, lr_scheduler, optimizer_u, lr_scheduler_u, logger, working_dir, is_best):
-    save_state = {'model': model.state_dict(),
+# 🌟 [防御性重写]：将异常检测专用的优化器设为可选参数 (None)，完美兼容视频摘要主干逻辑
+def epoch_saving(config, epoch, model, max_accuracy, optimizer, lr_scheduler, logger, working_dir, is_best=False, optimizer_u=None, lr_scheduler_u=None):
+    
+    # 获取真实模型权重 (兼容 DDP 分布式训练)
+    model_state = model.module.state_dict() if hasattr(model, 'module') else model.state_dict()
+    
+    save_state = {'model': model_state,
                   'optimizer': optimizer.state_dict(),
                   'lr_scheduler': lr_scheduler.state_dict(),
                   'max_accuracy': max_accuracy,
                   'epoch': epoch,
                   'config': config}
-    if (epoch + 1) % 10 == 0:
-        save_path = os.path.join(working_dir, f'ckpt_epoch_{epoch}.pth')
-        logger.info(f"{save_path} saving......")
-        torch.save(save_state, save_path)
-        logger.info(f"{save_path} saved !!!")
+                  
+    # [兼容性保留]：如果原作者的异常检测跑进来了并传了这两个变量，我们也顺手存起来
+    if optimizer_u is not None:
+        save_state['optimizer_u'] = optimizer_u.state_dict()
+    if lr_scheduler_u is not None:
+        save_state['lr_scheduler_u'] = lr_scheduler_u.state_dict()
+
+    # 🌟 每次都保存当前 Epoch 权重 (供 Auto-Validation 验证使用)
+    save_path = os.path.join(working_dir, f'ckpt_epoch_{epoch}.pth')
+    torch.save(save_state, save_path)
+    # logger.info(f"[{epoch}] 临时权重已落盘: {save_path}") # 注释掉以防日志太吵
+    
+    # 保存历史最高分 (仅当传入 is_best=True 时)
     if is_best:
         best_path = os.path.join(working_dir, f'best.pth')
         torch.save(save_state, best_path)
-        logger.info(f"{best_path} saved !!!")
+        logger.info(f"🏆 发现历史最高分，已覆写: {best_path} !!!")
 
 
 def load_checkpoint(config, model, optimizer, lr_scheduler, logger):
