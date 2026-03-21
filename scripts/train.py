@@ -1,11 +1,17 @@
 import os
 import sys
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# 将根目录强行加入 Python 的雷达扫描路径中
-if BASE_DIR not in sys.path:
-    sys.path.append(BASE_DIR)
 
-# 🌟 引入顶会必备的实验追踪神器 TensorBoard
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# 防止系统库覆盖本地代码
+SRC_DIR = os.path.join(BASE_DIR, 'src')
+if SRC_DIR not in sys.path:
+    sys.path.insert(0, SRC_DIR)
+
+THIRD_PARTY_DIR = os.path.join(BASE_DIR, 'third_party')
+if THIRD_PARTY_DIR not in sys.path:
+    sys.path.insert(0, THIRD_PARTY_DIR)
+
+# 引入实验追踪 TensorBoard
 from torch.utils.tensorboard import SummaryWriter
 
 # 引入我们昨天写好的评测器 (用于边训练边验证)
@@ -23,9 +29,7 @@ import torch.nn.functional as F
 import torch.backends.cudnn as cudnn
 import torch.distributed as dist
 
-# ===== 魔改点：干掉 apex，换成 PyTorch 原生 AMP =====
 from torch.cuda.amp import autocast, GradScaler
-# =================================================
 
 from einops import rearrange
 import mmcv

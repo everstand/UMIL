@@ -19,7 +19,7 @@ TVSUM_STATIC_MAP = {
     'video_13': '0tmA_C6XwfM',  # [SAFE] exact match
     'video_14': '3eYKfiOEJNs',  # [SAFE] exact match
     'video_15': 'xxdtq8mxegs',  # [SAFE] exact match
-    # 'video_16': 'WG0MBPpPC6I',  # [REVIEW] 需复核!
+    'video_16': 'WG0MBPpPC6I',  # [REVIEW] 需复核!
     'video_17': 'Hl-__g2gn_A',  # [SAFE] exact match
     'video_18': 'Yi4Ij2NM7U4',  # [SAFE] exact match
     'video_19': '37rzWOQsNIw',  # [SAFE] exact match
@@ -42,7 +42,7 @@ TVSUM_STATIC_MAP = {
     'video_36': 'WxtbjNsCQ8A',  # [SAFE] exact match
     'video_37': 'uGu_10sucQo',  # [SAFE] exact match
     'video_38': 'EE-bNr36nyA',  # [SAFE] exact match
-    # 'video_39': 'Se3oxnaPsz0',  # [REVIEW] 需复核!
+    'video_39': 'Se3oxnaPsz0',  # [REVIEW] 需复核!
     'video_40': 'oDXZc0tZe04',  # [SAFE] exact match
     'video_41': 'qqR6AEXwxoQ',  # [SAFE] exact match
     'video_42': 'EYqVtI9YWJA',  # [SAFE] exact match
