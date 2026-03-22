@@ -15,7 +15,6 @@ if THIRD_PARTY_DIR not in sys.path:
 from torch.utils.tensorboard import SummaryWriter
 
 # 引入我们昨天写好的评测器 (用于边训练边验证)
-from evaluate import evaluate
 import time
 import random
 import argparse
@@ -34,7 +33,7 @@ import torch.backends.cudnn as cudnn
 import torch.distributed as dist
 from umil.datasets.splits import load_split
 from umil.datasets.metadata.adapter import build_identity_maps
-
+from umil.engine.evaluator import VideoEvaluator
 from torch.cuda.amp import autocast, GradScaler
 
 from einops import rearrange
@@ -179,8 +178,9 @@ def main(config):
         import shutil
         shutil.move(os.path.join(config.OUTPUT, f"ckpt_epoch_{epoch}.pth"), temp_ckpt_path)
         
-        # 🌟 调用评价器，并传入 test_keys 进行绝对隔离测试
-        current_f1 = evaluate(config, args.dataset, temp_ckpt_path, test_keys=test_h5_keys)
+        # 🌟 实例化全新的评价引擎，并传入 test_keys 进行绝对隔离测试
+        evaluator = VideoEvaluator(config, args.dataset, temp_ckpt_path)
+        current_f1, current_div = evaluator.run(test_keys=test_h5_keys)
         
         # 🌟 将 F1 分数写入 TensorBoard
         writer.add_scalar('Metric/F1_Score', current_f1, epoch)
@@ -214,21 +214,22 @@ def mil_one_epoch(epoch, model, optimizer, lr_scheduler, train_loader, text_labe
         label_id = batch_data["label"].cuda(non_blocking=True)
         
         bz = images.shape[0]
-        a_aug = images.shape[1]
-        n_clips = images.shape[2]
+        n_clips = images.shape[1]  # 现在的第1维直接就是时间切片 k
         
-        images = rearrange(images, 'b a k c t h w -> (b a k) t c h w')
+        # 纯净重组：[Batch, Clips, Channels, Time, H, W] -> [Batch*Clips, Time, Channels, H, W]
+        images = rearrange(images, 'b k c t h w -> (b k) t c h w')
 
         # ===== 魔改点：用 autocast 包装前向传播和 Loss 计算 =====
         with autocast(enabled=use_amp):
             output = model(images, text_labels)
             
-            # 1. 提取结构化 Logits 矩阵 [B, T, C]
-            logits_tc = rearrange(output['y'], '(b a k) c -> (b a) k c', b=bz, a=a_aug, k=n_clips)
+            # 1. 提取结构化 Logits 矩阵 [B, T, C] (这里的 T 就是 n_clips)
+            logits_tc = rearrange(output['y'], '(b k) c -> b k c', b=bz, k=n_clips)
             
             # 获取真实的动作类别数量 C
             C = text_labels.shape[0]
-            labels = label_id.view(bz * a_aug, C)
+            # 标签直接对齐到真实的 Batch 维度 [B, C]
+            labels = label_id.view(bz, C)
             
             # =====================================================================
             # 🏆 理论落地：方向 1 - 时间平滑先验 (Temporal Smoothing Prior)

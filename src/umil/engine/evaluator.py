@@ -10,7 +10,6 @@ import clip
 from umil.metrics.summary_protocol import generate_summary
 from umil.metrics.fscore import evaluate_summary
 from umil.metrics.diversity import get_summ_diversity
-from umil.datasets.metadata.tvsum_metadata import TVSUM_STATIC_MAP
 from umil.datasets.metadata.adapter import build_identity_maps
 
 from models.mil_heads.temporal_smoothing import TemporalSmoothingPrior
@@ -182,16 +181,14 @@ class VideoEvaluator:
         with h5py.File(self.h5_path, 'r') as h5_data:
             keys = list(h5_data.keys())
             for key in tqdm(keys, desc=f"Eval {self.dataset_name.upper()}", ncols=80, leave=False):
-                # 核心修复：直接用 H5 的内部键 (如 'video_35') 进行身份拦截
+                # 直接用 H5 的内部键进行身份拦截
                 if key not in test_keys:
                     continue
                     
-                if self.dataset_name == 'summe':
-                    real_name = self.h5_to_real[key]
-                else:
-                    if key not in TVSUM_STATIC_MAP:
-                        raise KeyError(f"TVSUM_STATIC_MAP 缺失键值: {key}")
-                    real_name = self.h5_to_real[key]
+                # 纯粹的 Adapter 翻译：不再有 if dataset_name == ...
+                if key not in self.h5_to_real:
+                    raise KeyError(f"身份适配字典缺失 H5 键值: {key}")
+                real_name = self.h5_to_real[key]
                     
                 try:
                     video_path = os.path.join(self.video_dir, f"{real_name}.mp4")

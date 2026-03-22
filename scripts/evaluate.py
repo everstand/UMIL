@@ -18,6 +18,7 @@ os.environ['DECORD_EOF_RETRY_MAX'] = '20480'
 
 from utils.config import get_config
 from umil.engine.evaluator import VideoEvaluator
+from umil.datasets.splits import load_split
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
@@ -33,27 +34,18 @@ def main():
     
     config = get_config(args)
     
-    # 🌟 核心解析逻辑：严格匹配 tvsum.yml 结构
-    with open(args.test_keys, 'r') as f:
-        splits = yaml.load(f, Loader=yaml.FullLoader)
-    
-    # 自动识别 split 索引 (从文件名如 split0.pth 提取)
+    # 🌟 自动识别 split 索引
     split_idx = 0
     match = re.search(r'split(\d+)', args.ckpt)
     if match:
         split_idx = int(match.group(1))
-    
-    # 穿透层级：splits 是 List, splits[split_idx] 是 Dict
-    target_split = splits[split_idx]
-    raw_paths = target_split['test_keys']
-    
-    # 清洗路径：将 "../datasets/.../video_35" 转换为 "video_35"
-    test_keys = [p.split('/')[-1] for p in raw_paths]
+        
+    # 🌟 统一调用 splits.py，直接拿到纯净的 H5 Key 列表
+    _, test_keys = load_split(args.test_keys, split_idx)
     
     logger.info(f"成功加载 Split-{split_idx}，共 {len(test_keys)} 个测试视频。")
         
     evaluator = VideoEvaluator(config, args.dataset, args.ckpt)
-    evaluator.run(test_keys=test_keys)
 
 if __name__ == '__main__':
     main()

@@ -103,8 +103,12 @@ class BaseDataset(Dataset, metaclass=ABCMeta):
                  power=0,
                  dynamic_length=False,):
         super().__init__()
-        self.use_tar_format = True if ".tar" in data_prefix else False
-        data_prefix = data_prefix.replace(".tar", "")
+        
+        # 🌟 修复: 增加 data_prefix 的空值安全校验
+        self.use_tar_format = True if (data_prefix is not None and ".tar" in data_prefix) else False
+        if data_prefix is not None:
+            data_prefix = data_prefix.replace(".tar", "")
+            
         self.ann_file = ann_file
         self.repeat = repeat
         self.data_prefix = osp.realpath(

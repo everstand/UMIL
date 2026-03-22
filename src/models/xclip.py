@@ -251,7 +251,7 @@ def build_model(state_dict: dict, T=8, droppath=0., use_checkpoint=False, logger
 def load(model_path, name: str, device: Union[str, torch.device] = "cuda" if torch.cuda.is_available() else "cpu", 
          jit=True, T=8, droppath=0., use_checkpoint=False, logger=None, use_cache=True, prompts_alpha=1e-1, prompts_layers=2, mit_layers=1,
 ):
-    if model_path is None:
+    if not model_path:
         model_path = clip._download(clip._MODELS[name])
 
     try:
