@@ -6,10 +6,10 @@ set -e
 # ==========================================
 # 实验全局参数配置 (请根据你的物理路径修改此处)
 # ==========================================
-CONFIG_FILE="configs/tvsum.yaml"
+CONFIG_FILE="configs/tvsum/32_5.yaml"  # 🌟 替换为真实存在的 YAML
 DATASET="tvsum"
 CKPT_PATH="outputs/best_model_split0.pth"   # 替换为真实的权重路径
-TEST_KEYS="labels/action_vocabulary.txt"   # 替换为真实的测试集划分文件
+TEST_KEYS="splits/tvsum.yml"   # 替换为真实的测试集划分文件
 
 echo "================================================================="
 echo "🚀 开始执行视频摘要代表性先验的严格消融实验"

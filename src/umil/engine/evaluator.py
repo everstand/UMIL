@@ -11,10 +11,11 @@ from umil.metrics.summary_protocol import generate_summary
 from umil.metrics.fscore import evaluate_summary
 from umil.metrics.diversity import get_summ_diversity
 from umil.datasets.metadata.tvsum_metadata import TVSUM_STATIC_MAP
+from umil.datasets.metadata.adapter import build_identity_maps
 
-from umil.models.mil_heads.temporal_smoothing import TemporalSmoothingPrior
-from umil.models.mil_heads.representation_score import RepresentationPrior 
-from models.xclip import build_model 
+from models.mil_heads.temporal_smoothing import TemporalSmoothingPrior
+from models.mil_heads.representation_score import RepresentationPrior 
+from models.builder import build_umil_model
 
 logger = logging.getLogger(__name__)
 
@@ -60,17 +61,16 @@ class VideoEvaluator:
         
         # 4. 数据集路径校验
         if self.dataset_name == 'summe':
-            self.h5_path = "data/features/eccv16_dataset_summe_google_pool5.h5"
-            self.video_dir = "data/raw/SumMe/videos"
+            self.h5_path = "data/eccv16_datasets/eccv16_dataset_summe_google_pool5.h5"
+            self.video_dir = "data/SumMe/videos"
         elif self.dataset_name == 'tvsum':
-            self.h5_path = "data/features/eccv16_dataset_tvsum_google_pool5.h5"
-            self.video_dir = "data/raw/TVSum/videos"
+            self.h5_path = "data/eccv16_datasets/eccv16_dataset_tvsum_google_pool5.h5"
+            self.video_dir = "data/TVSum/videos"
         else:
             raise ValueError(f"🚨 不支持的数据集: {dataset_name}")
-            
-        if not os.path.exists(self.h5_path):
-            self.h5_path = self.h5_path.replace("data/features/", "data/eccv16_datasets/")
-            self.video_dir = self.video_dir.replace("data/raw/", "data/")
+
+        self.h5_to_real, self.real_to_h5 = build_identity_maps(self.dataset_name, self.h5_path)
+
 
     def _predict_video_scores(self, model, video_path, text_tokens):
         vr = decord.VideoReader(video_path, width=224, height=224)
@@ -170,7 +170,7 @@ class VideoEvaluator:
         state_dict = checkpoint['model'] if 'model' in checkpoint else checkpoint
         new_state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
 
-        model = build_model(state_dict=new_state_dict, T=self.config.DATA.NUM_FRAMES, logger=logger).to(self.device)
+        model = build_umil_model(self.config, state_dict=new_state_dict, is_training=False, logger=logger).to(self.device)
         model.eval()
 
         text_prompts = [f"A video of a person {action}" for action in self.candidate_actions]
@@ -182,15 +182,16 @@ class VideoEvaluator:
         with h5py.File(self.h5_path, 'r') as h5_data:
             keys = list(h5_data.keys())
             for key in tqdm(keys, desc=f"Eval {self.dataset_name.upper()}", ncols=80, leave=False):
+                # 核心修复：直接用 H5 的内部键 (如 'video_35') 进行身份拦截
+                if key not in test_keys:
+                    continue
+                    
                 if self.dataset_name == 'summe':
-                    real_name = h5_data[key]['video_name'][()].item().decode('utf-8')
+                    real_name = self.h5_to_real[key]
                 else:
                     if key not in TVSUM_STATIC_MAP:
                         raise KeyError(f"TVSUM_STATIC_MAP 缺失键值: {key}")
-                    real_name = TVSUM_STATIC_MAP[key]
-
-                if real_name not in test_keys:
-                    continue
+                    real_name = self.h5_to_real[key]
                     
                 try:
                     video_path = os.path.join(self.video_dir, f"{real_name}.mp4")

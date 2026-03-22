@@ -237,10 +237,14 @@ class BaseDataset(Dataset, metaclass=ABCMeta):
 
 
 class FrameDataset(BaseDataset):
-    def __init__(self, ann_file, pipeline, labels_file, start_index=0, train_keys=None,**kwargs):
-        # 魔改：labels_file 现在传进来的是 .npy 字典文件的路径
+    def __init__(self, ann_file, pipeline, labels_file, start_index=0,
+                 train_keys=None, real_to_h5_map=None, **kwargs):
+        # 多热标签字典
         self.labels_dict = np.load(labels_file, allow_pickle=True).item()
-        self.train_keys = train_keys
+        # 训练样本主键：现在应统一为 H5 key
+        self.train_keys = set(train_keys) if train_keys is not None else None
+        # 身份防腐层：真实视频名 -> H5 key
+        self.real_to_h5_map = real_to_h5_map or {}
         super().__init__(ann_file, pipeline, start_index=start_index, **kwargs)
         self.labels_file = labels_file
 
@@ -254,40 +258,38 @@ class FrameDataset(BaseDataset):
         """加载视频路径和对应的 Multi-hot 标签"""
         vid = 0
         video_infos = []
-        # ann_file 就是我们刚生成的 summe_train_list.txt
+
         with open(self.ann_file, 'r') as fin:
             for line in fin:
                 filename = line.strip()
                 if not filename:
                     continue
-                
-                if self.train_keys is not None:
-                    # 提取干净的视频名，例如 '/data/video_1.mp4' -> 'video_1'
-                    vid_name = os.path.basename(filename).split('.')[0]
-                    # 如果这个视频不在官方划分的折(Split)里，直接跳过！
-                    if vid_name not in self.train_keys:
-                        continue
-                
-                # 获取视频ID (如: video_1)
-                video_id = osp.splitext(osp.basename(filename))[0]
-                
-                # 【防坑补丁】：抹去 "_fixed" 后缀，去匹配旧的 .npy 字典
-                dict_key = video_id.replace('_fixed', '') if video_id.endswith('_fixed') else video_id
-                
-                if dict_key not in self.labels_dict:
-                    print(f"⚠️ 警告: 找不到 {video_id} 的多标签，已跳过。")
+
+                real_name = os.path.basename(filename).split('.')[0]
+
+                # 通过身份防腐层把真实视频名映射回 H5 key
+                h5_key = self.real_to_h5_map.get(real_name, real_name)
+
+                if self.train_keys is not None and h5_key not in self.train_keys:
                     continue
-                    
-                # 拿到对应的 [0, 1, 0, 1...] 多热编码数组
+
+                # 兼容旧版 .npy 标签字典里的 _fixed 补丁
+                dict_key = real_name.replace('_fixed', '') if real_name.endswith('_fixed') else real_name
+
+                if dict_key not in self.labels_dict:
+                    print(f"⚠️ 警告: 找不到 {dict_key} 的多标签，已跳过。")
+                    continue
+
                 label = self.labels_dict[dict_key]
-                
+
                 video_infos.append(dict(
-                    filename=filename, 
-                    label=label.astype(np.float32), # 必须转为 float32
-                    tar=self.use_tar_format, 
+                    filename=filename,
+                    label=label.astype(np.float32),
+                    tar=self.use_tar_format,
                     vid=vid
                 ))
                 vid += 1
+
         return video_infos
 
 
@@ -393,7 +395,7 @@ def mmcv_collate(batch, samples_per_gpu=1):
     else:
         return default_collate(batch)
 
-def build_dataloader(logger, config, train_keys=None):
+def build_dataloader(logger, config, train_keys=None, real_to_h5_map=None):
     scale_resize = int(256 / 224 * config.DATA.INPUT_SIZE)
 
     # 魔改：加入 DecordInit 和 DecordDecode，不用图片，直接读视频！
@@ -425,10 +427,14 @@ def build_dataloader(logger, config, train_keys=None):
         dict(type='ToTensor', keys=['imgs', 'label']),
     ]
         
-    train_data = FrameDataset(ann_file=config.DATA.TRAIN_FILE, data_prefix=config.DATA.ROOT,
-                              filename_tmpl=config.DATA.FILENAME_TMPL, labels_file=config.DATA.LABEL_LIST,
-                              pipeline=train_pipeline, pipeline_=train_pipeline_S,
-                              train_keys=train_keys)
+    train_data = FrameDataset(
+        ann_file=config.DATA.TRAIN_FILE,
+        pipeline=train_pipeline,
+        labels_file=config.DATA.LABEL_LIST,
+        start_index=0,
+        train_keys=train_keys,
+        real_to_h5_map=real_to_h5_map
+    )
     
     num_tasks = dist.get_world_size() if dist.is_initialized() else 1
     global_rank = dist.get_rank() if dist.is_initialized() else 0

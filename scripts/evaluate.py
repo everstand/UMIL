@@ -1,7 +1,11 @@
 import os
 import sys
+import logging
+import argparse
+import yaml
+import re
 
-# 1. 路径与命名空间注入
+# 1. 路径注入
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC_DIR = os.path.join(BASE_DIR, 'src')
 THIRD_PARTY_DIR = os.path.join(BASE_DIR, 'third_party')
@@ -10,45 +14,45 @@ for d in [SRC_DIR, THIRD_PARTY_DIR]:
     if d not in sys.path:
         sys.path.insert(0, d)
 
-# 2. 镇压底层依赖 Bug
 os.environ['DECORD_EOF_RETRY_MAX'] = '20480'
 
-import logging
-import argparse
-# 核心：使用完整的配置构建器，而非直接解析裸 YAML
 from utils.config import get_config
 from umil.engine.evaluator import VideoEvaluator
 
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(message)s')
+logger = logging.getLogger(__name__)
 
 def main():
     parser = argparse.ArgumentParser(description="UMIL Evaluation Script")
-    parser.add_argument('--config', required=True, help="Path to config yaml")
+    parser.add_argument('--config', required=True)
     parser.add_argument('--dataset', required=True, choices=['summe', 'tvsum'])
-    parser.add_argument('--ckpt', required=True, help="Path to model weights")
-    parser.add_argument('--test_keys', required=True, help='Path to the test split txt file')
-    
-    # 核心：暴露 yacs 动态配置覆写入口，供消融实验脚本驱动
+    parser.add_argument('--ckpt', required=True)
+    parser.add_argument('--test_keys', required=True, help='Path to tvsum.yml')
     parser.add_argument('--opts', default=None, nargs=argparse.REMAINDER)
     args = parser.parse_args()
     
-    # 构建带默认值与命令行覆写的完整配置树
     config = get_config(args)
     
-    # 从物理文件加载测试键值
-    if not os.path.exists(args.test_keys):
-        raise FileNotFoundError(f"找不到测试集划分文件: {args.test_keys}")
+    # 🌟 核心解析逻辑：严格匹配 tvsum.yml 结构
     with open(args.test_keys, 'r') as f:
-        test_keys = [line.strip() for line in f if line.strip()]
-        
-    # 实例化引擎
-    # 动作词表的严格同源校验已在 VideoEvaluator 的 __init__ 中完成
-    evaluator = VideoEvaluator(
-        config=config, 
-        dataset_name=args.dataset, 
-        checkpoint_path=args.ckpt
-    )
+        splits = yaml.load(f, Loader=yaml.FullLoader)
     
+    # 自动识别 split 索引 (从文件名如 split0.pth 提取)
+    split_idx = 0
+    match = re.search(r'split(\d+)', args.ckpt)
+    if match:
+        split_idx = int(match.group(1))
+    
+    # 穿透层级：splits 是 List, splits[split_idx] 是 Dict
+    target_split = splits[split_idx]
+    raw_paths = target_split['test_keys']
+    
+    # 清洗路径：将 "../datasets/.../video_35" 转换为 "video_35"
+    test_keys = [p.split('/')[-1] for p in raw_paths]
+    
+    logger.info(f"成功加载 Split-{split_idx}，共 {len(test_keys)} 个测试视频。")
+        
+    evaluator = VideoEvaluator(config, args.dataset, args.ckpt)
     evaluator.run(test_keys=test_keys)
 
 if __name__ == '__main__':

@@ -23,11 +23,17 @@ import datetime
 import numpy as np
 from pathlib import Path
 
+import h5py
+import decord
+import cv2
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.backends.cudnn as cudnn
 import torch.distributed as dist
+from umil.datasets.splits import load_split
+from umil.datasets.metadata.adapter import build_identity_maps
 
 from torch.cuda.amp import autocast, GradScaler
 
@@ -35,12 +41,17 @@ from einops import rearrange
 import mmcv
 import clip
 
-from models import xclip
+from models.builder import build_umil_model
 from datasets.build import build_dataloader
 from utils.config import get_config
 from utils.optimizer import build_optimizer, build_scheduler
 from utils.tools import AverageMeter, epoch_saving, load_checkpoint
 from utils.logger import create_logger
+
+def evaluate(config, dataset_name, checkpoint_path, test_keys):
+    evaluator = VideoEvaluator(config, dataset_name, checkpoint_path)
+    f1, _ = evaluator.run(test_keys=test_keys)
+    return f1
 
 def parse_option():
     parser = argparse.ArgumentParser()
@@ -71,116 +82,40 @@ def parse_option():
     return args, config
 
 def main(config):
+
     # ---------------------------------------------------------
-    # 🌟 1. 解析官方 YAML 划分文件 (带 H5 盲匹配翻译器 + 终极诊断)
+    # 1. 统一数据划分与身份防腐层
     # ---------------------------------------------------------
-    import yaml
-    import h5py
-    import decord
-    import cv2
-    
-    print(f"📖 正在加载官方数据划分: {args.split_file} (Split {args.split_id})")
-    with open(args.split_file, 'r') as f:
-        all_splits = yaml.safe_load(f)
-        current_split = all_splits[args.split_id]
-        
-    raw_train_keys = current_split['train_keys']
-    raw_test_keys = current_split['test_keys']
-    
-    print(f"🕵️ 诊断: YAML 文件里的原始 Key 长什么样？ 样例: {raw_train_keys[:3]}")
-    
-    # 确定路径
+    print(f"📖 正在通过统一接口加载数据划分: {args.split_file} (Split {args.split_id})")
+
+    train_h5_keys, test_h5_keys = load_split(args.split_file, args.split_id)
+
     if args.dataset == 'summe':
         h5_path = "data/eccv16_datasets/eccv16_dataset_summe_google_pool5.h5"
-        video_dir = "data/SumMe/videos"
     else:
         h5_path = "data/eccv16_datasets/eccv16_dataset_tvsum_google_pool5.h5"
-        video_dir = "data/TVSum/videos"
-        
-    print(f"🔤 正在通过户口本 {h5_path} 翻译真实视频文件名...")
-    
-    # 🌟 建立物理视频的帧数指纹库
-    fingerprints = {}
-    if os.path.exists(video_dir):
-        video_files = [f for f in os.listdir(video_dir) if f.endswith(('.mp4', '.avi', '.webm', '.mkv'))]
-        for fname in video_files:
-            vpath = os.path.join(video_dir, fname)
-            vid_id = fname.split('.')[0]
-            try:
-                vr = decord.VideoReader(vpath)
-                fingerprints[vid_id] = len(vr)
-            except Exception:
-                try:
-                    cap = cv2.VideoCapture(vpath)
-                    if cap.isOpened():
-                        fingerprints[vid_id] = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                        cap.release()
-                except Exception:
-                    pass
-    print(f"🎯 成功提取到 {len(fingerprints)} 个视频的指纹库！")
 
-    train_keys = []
-    test_keys = []
-    
-    def translate_keys(raw_keys, out_list):
-        with h5py.File(h5_path, 'r') as h5_data:
-            h5_keys = list(h5_data.keys())
-            for k in raw_keys:
-                k = str(k).strip().split('/')[-1]
-                
-                # 🛡️ 容错 1：如果 YAML 里已经是真实的视频名了 (在物理文件夹里能找到)，直接放行！
-                if k in fingerprints:
-                    out_list.append(k)
-                    continue
-                
-                # 🛡️ 容错 2：如果在 H5 里找不到，说明 YAML 格式和 H5 彻底对不上
-                if k not in h5_data:
-                    print(f"⚠️ 警告: '{k}' 既不是真实视频名，也不在 H5 字典中 (H5包含 {h5_keys[:3]}...)")
-                    continue
-                
-                vname = None
-                if 'video_name' in h5_data[k]:
-                    vname_raw = h5_data[k]['video_name'][()]
-                    vname = vname_raw.item().decode('utf-8') if hasattr(vname_raw, 'item') else str(vname_raw.decode('utf-8'))
-                
-                if not vname:
-                    n_frames_h5 = h5_data[k]['n_frames'][()]
-                    min_diff = float('inf')
-                    for fname, vlen in fingerprints.items():
-                        diff = abs(vlen - n_frames_h5)
-                        if diff < min_diff:
-                            min_diff = diff
-                            vname = fname
-                
-                if vname:
-                    out_list.append(vname)
-                else:
-                    print(f"⚠️ 警告: '{k}' 盲匹配失败，极大概率是指纹库提取数为 0！")
+    h5_to_real, real_to_h5 = build_identity_maps(args.dataset, h5_path)
 
-    translate_keys(raw_train_keys, train_keys)
-    translate_keys(raw_test_keys, test_keys)
-            
-    print(f"✅ 严格控制变量: 训练集 {len(train_keys)} 个视频，测试集 {len(test_keys)} 个视频")
-    print(f"🔍 翻译样例: {train_keys[:3]}") 
+    print(f"✅ 统一解析完毕: 训练集 {len(train_h5_keys)} 个视频，测试集 {len(test_h5_keys)} 个视频")
+
     # ---------------------------------------------------------
-    
-    # ---------------------------------------------------------
-    # 🌟 2. 初始化 TensorBoard 和带有名单的 DataLoader
+    # 2. 初始化 TensorBoard 和 DataLoader
     # ---------------------------------------------------------
     log_dir = os.path.join(config.OUTPUT, f"tensorboard_logs/split_{args.split_id}")
     writer = SummaryWriter(log_dir=log_dir)
-    
-    # 🌟 核心：精确接住 8 个返回值，丢弃不需要的重复项
-    _, _, _, train_loader, val_loader, _, _, train_loader_umil = build_dataloader(logger, config, train_keys=train_keys)
-    
-    # 强行传入 None 触发自动下载预训练模型
-    model, _ = xclip.load(None, config.MODEL.ARCH, 
-                         device="cpu", jit=False, 
-                         T=config.DATA.NUM_FRAMES,
-                         droppath=config.MODEL.DROP_PATH_RATE, 
-                         use_checkpoint=config.TRAIN.USE_CHECKPOINT, 
-                         use_cache=config.MODEL.FIX_TEXT,
-                         logger=logger)
+
+    _, _, _, train_loader, val_loader, _, _, train_loader_umil = build_dataloader(
+        logger,
+        config,
+        train_keys=train_h5_keys,
+        real_to_h5_map=real_to_h5,
+    )
+
+    # ---------------------------------------------------------
+    # 3. 构建模型
+    # ---------------------------------------------------------
+    model = build_umil_model(config, is_training=True, logger=logger)
                          
     # 🌟 显存优化：冻结视觉编码器，只练摘要层
     for param in model.visual.parameters():
@@ -245,7 +180,7 @@ def main(config):
         shutil.move(os.path.join(config.OUTPUT, f"ckpt_epoch_{epoch}.pth"), temp_ckpt_path)
         
         # 🌟 调用评价器，并传入 test_keys 进行绝对隔离测试
-        current_f1 = evaluate(config, args.dataset, temp_ckpt_path, test_keys=test_keys)
+        current_f1 = evaluate(config, args.dataset, temp_ckpt_path, test_keys=test_h5_keys)
         
         # 🌟 将 F1 分数写入 TensorBoard
         writer.add_scalar('Metric/F1_Score', current_f1, epoch)

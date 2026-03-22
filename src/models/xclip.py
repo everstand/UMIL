@@ -165,6 +165,7 @@ class XCLIP(CLIP):
         logit_scale = self.logit_scale.exp()
         
         if self.training:
+            # 这里的计算逻辑完全保留，绝对不碰
             _, v_features, v_features_u, t_features, \
                 _, v_features_u_n, t_features_n = self.uda(video_features, text_features, self.training)
 
@@ -172,27 +173,31 @@ class XCLIP(CLIP):
             logits_u = torch.einsum("bd,bkd->bk", v_features_u, logit_scale * t_features)
             logits_u_n = torch.einsum("bd,bkd->bk", v_features_u_n.to(t_features.dtype), logit_scale * t_features)
 
-            # 🌟 修正：双流形输出
+            # 仅仅在这里执行“扩充式”契约组装
             outputs = {
                 "y": logits,
+                "feature_v_raw": video_features,
+                "feature_v_proj": v_features,
+                "feature_t": t_features,
                 "y_cluster_all": logits_u,
-                "feature_v_raw": video_features,  # 原始视觉空间 (解耦性强)
-                "feature_v_proj": v_features,     # 任务投影空间 (同构性强)
-                "y_cluster_all_nograd": logits_u_n
+                "y_cluster_all_nograd": logits_u_n,
             }
             return outputs
+            
         else:
+            # 这里的计算逻辑完全保留，绝对不碰
             video_features, v_features, v_features_u, t_features = self.uda(video_features, text_features, self.training)
+            
             logits = torch.einsum("bd,bkd->bk", v_features, logit_scale * t_features)
             logits_u = torch.einsum("bd,bkd->bk", v_features_u, logit_scale * t_features)
 
-            # 🌟 修正：双流形输出
+            # 仅仅在这里执行“扩充式”契约组装
             outputs = {
                 "y": logits,
+                "feature_v_raw": video_features,
+                "feature_v_proj": v_features,
+                "feature_t": t_features,  # 注意：这里统一定义为 t_features，纠正了你旧代码里混用 text_features 的隐患
                 "y_cluster_all": logits_u,
-                "feature_v_raw": video_features,  # 原始视觉空间 (解耦性强)
-                "feature_v_proj": v_features,     # 任务投影空间 (同构性强)
-                "feature_t": text_features,
             }
             return outputs
 
