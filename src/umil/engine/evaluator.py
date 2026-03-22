@@ -12,7 +12,8 @@ from umil.metrics.fscore import evaluate_summary
 from umil.metrics.diversity import get_summ_diversity
 from umil.datasets.metadata.tvsum_metadata import TVSUM_STATIC_MAP
 
-# 暂时保留对旧目录的兼容，等下一步我们再去重构模型层
+from umil.models.mil_heads.temporal_smoothing import TemporalSmoothingPrior
+from umil.models.mil_heads.representation_score import RepresentationPrior 
 from models.xclip import build_model 
 
 logger = logging.getLogger(__name__)
@@ -29,17 +30,35 @@ class AverageMeter(object):
 
 class VideoEvaluator:
     """
-    [Engine Layer] 视频摘要离线评估引擎
-    职责：加载权重 -> 抽取视频帧 -> 前向传播 -> 调用协议层算分
+    [Engine Layer] 视频摘要离线评估与消融引擎
     """
-    def __init__(self, config, dataset_name, checkpoint_path, candidate_actions):
+    def __init__(self, config, dataset_name, checkpoint_path):
         self.config = config
         self.dataset_name = dataset_name.lower()
         self.checkpoint_path = checkpoint_path
-        self.candidate_actions = candidate_actions
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
-        # 严格校验数据集路径
+        # 1. 防御性配置读取与双流形参数解析
+        eval_cfg = getattr(config, 'EVAL', None)
+        self.ablation_mode = getattr(eval_cfg, 'ABLATION_MODE', 'E3') if eval_cfg else 'E3'
+        self.k_classes     = int(getattr(eval_cfg, 'TOP_K', 3)) if eval_cfg else 3
+        self.alpha         = float(getattr(eval_cfg, 'ALPHA', 0.5)) if eval_cfg else 0.5
+        self.rep_space     = getattr(eval_cfg, 'REP_SPACE', 'raw') if eval_cfg else 'raw'
+        
+        logger.info(f"🚀 初始化评估引擎 | 模式: {self.ablation_mode} | K: {self.k_classes} | Alpha: {self.alpha} | R_t空间: {self.rep_space}")
+
+        # 2. 强制语义同源：从唯一源读取动作词表
+        vocab_path = 'labels/action_vocabulary.txt'
+        if not os.path.exists(vocab_path):
+            raise FileNotFoundError(f"🚨 找不到统一动作词表文件: {vocab_path}，请确保伪标签生成逻辑已先运行。")
+        with open(vocab_path, 'r', encoding='utf-8') as f:
+            self.candidate_actions = [line.strip() for line in f if line.strip()]
+
+        # 3. 实例化组件
+        self.smoothing_prior = TemporalSmoothingPrior(kernel_size=3).to(self.device)
+        self.rep_scorer = RepresentationPrior().to(self.device)
+        
+        # 4. 数据集路径校验
         if self.dataset_name == 'summe':
             self.h5_path = "data/features/eccv16_dataset_summe_google_pool5.h5"
             self.video_dir = "data/raw/SumMe/videos"
@@ -49,13 +68,11 @@ class VideoEvaluator:
         else:
             raise ValueError(f"🚨 不支持的数据集: {dataset_name}")
             
-        # 兼容旧路径(如果你还没把数据移到 data/features，可以暂时保留这几行容错)
         if not os.path.exists(self.h5_path):
             self.h5_path = self.h5_path.replace("data/features/", "data/eccv16_datasets/")
             self.video_dir = self.video_dir.replace("data/raw/", "data/")
 
     def _predict_video_scores(self, model, video_path, text_tokens):
-        """纯粹的单视频前向传播逻辑"""
         vr = decord.VideoReader(video_path, width=224, height=224)
         total_frames = len(vr)
         
@@ -63,12 +80,17 @@ class VideoEvaluator:
         frame_interval = self.config.DATA.FRAME_INTERVAL
         actual_clip_len = clip_len * frame_interval
 
-        frame_scores = []
+        all_clip_logits = []
+        all_clip_features_raw = []
+        all_clip_features_proj = []
+        clip_frame_counts = []
+
         for start_idx in range(0, total_frames, actual_clip_len):
             end_idx = min(start_idx + actual_clip_len, total_frames)
             actual_len = end_idx - start_idx
+            clip_frame_counts.append(actual_len)
+
             frame_indices = list(range(start_idx, end_idx, frame_interval))
-            
             if len(frame_indices) < clip_len:
                 frame_indices.extend([frame_indices[-1]] * (clip_len - len(frame_indices)))
                 
@@ -79,9 +101,59 @@ class VideoEvaluator:
             with torch.no_grad():
                 outputs = model(frames_tensor, text_tokens)
                 
-            logits = outputs.get('predicts', outputs.get('logits', outputs.get('output', list(outputs.values())[0]))) if isinstance(outputs, dict) else (outputs[0] if isinstance(outputs, tuple) else outputs)
-            score = torch.max(torch.sigmoid(logits), dim=1)[0].item()
-            frame_scores.extend([score] * actual_len)
+            if not all(k in outputs for k in ('y', 'feature_v_raw', 'feature_v_proj')):
+                raise KeyError("模型输出缺失主键 'y', 'feature_v_raw' 或 'feature_v_proj'")
+            
+            all_clip_logits.append(outputs['y'])
+            all_clip_features_raw.append(outputs['feature_v_raw'])
+            all_clip_features_proj.append(outputs['feature_v_proj'])
+
+        if not all_clip_logits:
+            return np.array([])
+
+        video_logits = torch.cat(all_clip_logits, dim=0)     
+        video_features_raw = torch.cat(all_clip_features_raw, dim=0) 
+        video_features_proj = torch.cat(all_clip_features_proj, dim=0)
+
+        if self.ablation_mode == 'E0':
+            probs = torch.sigmoid(video_logits)
+            p_scores = torch.max(probs, dim=1)[0].cpu().numpy()
+            final_clip_scores = p_scores
+        else:
+            video_logits_3d = video_logits.unsqueeze(0) 
+            smoothed_logits = self.smoothing_prior(video_logits_3d).squeeze(0)
+            probs = torch.sigmoid(smoothed_logits)
+
+            if self.ablation_mode == 'E1':
+                p_scores = torch.max(probs, dim=1)[0].cpu().numpy()
+                final_clip_scores = p_scores
+            elif self.ablation_mode in ['E2', 'E3']:
+                k = min(self.k_classes, probs.shape[1])
+                topk_probs, _ = torch.topk(probs, k, dim=1)
+                p_scores = topk_probs.mean(dim=1).cpu().numpy()
+
+                if self.ablation_mode == 'E2':
+                    final_clip_scores = p_scores
+                elif self.ablation_mode == 'E3':
+                    # 依据配置进行流形空间路由
+                    if self.rep_space == 'raw':
+                        selected_features = video_features_raw
+                    elif self.rep_space == 'proj':
+                        selected_features = video_features_proj
+                    else:
+                        raise ValueError(f"未知的 R_t 空间配置: {self.rep_space}")
+
+                    video_features_3d = selected_features.detach().unsqueeze(0)
+                    r_scores = self.rep_scorer(video_features_3d).squeeze(0).cpu().numpy()
+                    
+                    # 终极融合: S_t = αP_t + (1-α)R_t
+                    final_clip_scores = self.alpha * p_scores + (1.0 - self.alpha) * r_scores
+                else:
+                    raise ValueError(f"未知的消融模式: {self.ablation_mode}")
+
+        frame_scores = []
+        for score, count in zip(final_clip_scores, clip_frame_counts):
+            frame_scores.extend([score] * count)
 
         return np.array(frame_scores)
 
@@ -132,29 +204,25 @@ class VideoEvaluator:
                     nfps = h5_data[key]['n_frame_per_seg'][()].tolist()
                     seq_features = h5_data[key]['features'][()]
 
-                    # 核心解耦点：调用内部打分器 -> 调用外部协议尺子
+                    # 前向推理
                     frame_scores = self._predict_video_scores(model, video_path, text_tokens)
                     machine_summary = generate_summary(frame_scores, cps, n_frames_h5, nfps, positions)
 
+                    # 评测 F1
                     eval_metric = 'avg' if self.dataset_name == 'tvsum' else 'max'
                     f1 = evaluate_summary(machine_summary, user_summary, eval_metric=eval_metric)
                     f1_meter.update(f1)
 
-                    # 🌟 核心修正：极其严苛的 Adapter 防御与映射
+                    # 严格对齐 Adapter 层
                     positions = np.asarray(positions).astype(np.int64)
-                    # 防御 1：剔除可能存在的越界索引 (H5 预处理的常见坑)
                     positions = positions[positions < len(machine_summary)]
 
-                    # 防御 2：绝不容忍特征与采样点数量不对齐
                     if len(positions) != len(seq_features):
                         raise ValueError(
-                            f"🚨 Adapter 层对齐失败：物理抽帧点数量 ({len(positions)}) "
-                            f"与视觉特征序列长度 ({len(seq_features)}) 无法完美匹配！"
+                            f"🚨 Adapter层未对齐: 物理抽帧点数量({len(positions)}) vs 视觉特征序列长度({len(seq_features)})"
                         )
 
                     machine_summary_feature_level = machine_summary[positions]
-
-                    # 严格对齐后，再送入纯净的底层协议
                     diversity = get_summ_diversity(machine_summary_feature_level, seq_features)
                     div_meter.update(diversity)
 

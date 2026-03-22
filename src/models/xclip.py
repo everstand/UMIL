@@ -168,30 +168,30 @@ class XCLIP(CLIP):
             _, v_features, v_features_u, t_features, \
                 _, v_features_u_n, t_features_n = self.uda(video_features, text_features, self.training)
 
-            # logits = torch.einsum("bd,bkd->bk", v_features, logit_scale * t_features)
-            # logits_u = torch.einsum("bd,bkd->bk", v_features_u, logit_scale * t_features)
-            # logits_u_n = torch.einsum("bd,bkd->bk", v_features_u_n, logit_scale * t_features)
             logits = torch.einsum("bd,bkd->bk", v_features, logit_scale * t_features)
             logits_u = torch.einsum("bd,bkd->bk", v_features_u, logit_scale * t_features)
-            # 强行对齐数据类型
             logits_u_n = torch.einsum("bd,bkd->bk", v_features_u_n.to(t_features.dtype), logit_scale * t_features)
 
-            outputs=  {
-                    "y": logits,
-                    "y_cluster_all": logits_u,
-                    "feature_v": video_features,
-                    "y_cluster_all_nograd": logits_u_n
-                }
-            return outputs
-        else:
-            video_features, v_features, v_features_u, t_features= self.uda(video_features, text_features, self.training)
-            logits = torch.einsum("bd,bkd->bk", v_features, logit_scale * t_features)
-            logits_u = torch.einsum("bd,bkd->bk", v_features_u, logit_scale * t_features)
-
+            # 🌟 修正：双流形输出
             outputs = {
                 "y": logits,
                 "y_cluster_all": logits_u,
-                "feature_v": video_features,
+                "feature_v_raw": video_features,  # 原始视觉空间 (解耦性强)
+                "feature_v_proj": v_features,     # 任务投影空间 (同构性强)
+                "y_cluster_all_nograd": logits_u_n
+            }
+            return outputs
+        else:
+            video_features, v_features, v_features_u, t_features = self.uda(video_features, text_features, self.training)
+            logits = torch.einsum("bd,bkd->bk", v_features, logit_scale * t_features)
+            logits_u = torch.einsum("bd,bkd->bk", v_features_u, logit_scale * t_features)
+
+            # 🌟 修正：双流形输出
+            outputs = {
+                "y": logits,
+                "y_cluster_all": logits_u,
+                "feature_v_raw": video_features,  # 原始视觉空间 (解耦性强)
+                "feature_v_proj": v_features,     # 任务投影空间 (同构性强)
                 "feature_t": text_features,
             }
             return outputs

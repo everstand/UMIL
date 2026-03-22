@@ -20,8 +20,9 @@ _C.DATA.NUM_CLIPS = 16
 _C.DATA.NUM_FRAMES = 5
 _C.DATA.FRAME_INTERVAL = 6
 _C.DATA.NUM_CLASSES = 400
-_C.DATA.LABEL_LIST = 'labels/kinetics_400_labels.csv'
+_C.DATA.LABEL_LIST = 'labels/action_vocabulary.txt' # 指向动态生成的伪标签词表
 _C.DATA.FILENAME_TMPL = 'img_{:08}.jpg'
+
 # -----------------------------------------------------------------------------
 # Model settings
 # -----------------------------------------------------------------------------
@@ -69,13 +70,20 @@ _C.TEST.NUM_CROP = 1
 _C.TEST.ONLY_TEST = False
 
 # -----------------------------------------------------------------------------
+# Evaluation & Ablation settings (🌟 新增的消融实验引擎节点)
+# -----------------------------------------------------------------------------
+_C.EVAL = CN()
+_C.EVAL.ABLATION_MODE = 'E3' # 可选: 'E0', 'E1', 'E2', 'E3'
+_C.EVAL.TOP_K = 3            # 语义聚合的并发动作假设数量
+_C.EVAL.ALPHA = 0.5          # S_t = αP_t + (1-α)R_t 中的融合权重
+_C.EVAL.REP_SPACE = 'raw'
+# -----------------------------------------------------------------------------
 # Misc
 # -----------------------------------------------------------------------------
 _C.OUTPUT = ''
 _C.SAVE_FREQ = 1
 _C.PRINT_FREQ = 20
 _C.SEED = 1024
-
 
 
 def _update_config_from_file(config, cfg_file):
@@ -100,28 +108,26 @@ def update_config(config, args):
     if args.opts:
         config.merge_from_list(args.opts)
     # merge from specific arguments
-    if args.batch_size:
+    if getattr(args, 'batch_size', None):
         config.TRAIN.BATCH_SIZE = args.batch_size
-    if args.pretrained:
+    if getattr(args, 'pretrained', None):
         config.MODEL.PRETRAINED = args.pretrained
-    if args.resume:
+    if getattr(args, 'resume', None):
         config.MODEL.RESUME = args.resume
-    if args.accumulation_steps:
+    if getattr(args, 'accumulation_steps', None):
         config.TRAIN.ACCUMULATION_STEPS = args.accumulation_steps
-    if args.output:
+    if getattr(args, 'output', None):
         config.OUTPUT = args.output
-    if args.only_test:
+    if getattr(args, 'only_test', None):
         config.TEST.ONLY_TEST = True
-    # set local rank for distributed training
-    config.LOCAL_RANK = args.local_rank
+    
+    # 防御性读取 local_rank，兼容非分布式运行环境
+    config.LOCAL_RANK = getattr(args, 'local_rank', 0) 
     config.freeze()
 
 
 def get_config(args):
     """Get a yacs CfgNode object with default values."""
-    # Return a clone so that the defaults will not be altered
-    # This is for the "local variable" use pattern
     config = _C.clone()
     update_config(config, args)
-
     return config
