@@ -61,10 +61,6 @@ def parse_option():
     return args, config
 
 def main(config, args):
-    # ---------------------------------------------------------
-    # 1. 统一数据划分与身份防腐层
-    # ---------------------------------------------------------
-    print(f"📖 正在通过统一接口加载数据划分: {args.split_file} (Split {args.split_id})")
     train_h5_keys, test_h5_keys = load_split(args.split_file, args.split_id)
 
     if args.dataset == 'summe':
@@ -73,11 +69,7 @@ def main(config, args):
         h5_path = "data/eccv16_datasets/eccv16_dataset_tvsum_google_pool5.h5"
 
     h5_to_real, real_to_h5 = build_identity_maps(args.dataset, h5_path)
-    print(f"✅ 统一解析完毕: 训练集 {len(train_h5_keys)} 个视频，测试集 {len(test_h5_keys)} 个视频")
 
-    # ---------------------------------------------------------
-    # 2. 初始化 TensorBoard 和 DataLoader
-    # ---------------------------------------------------------
     log_dir = os.path.join(config.OUTPUT, f"tensorboard_logs/split_{args.split_id}")
     writer = SummaryWriter(log_dir=log_dir)
 
@@ -85,14 +77,10 @@ def main(config, args):
         logger, config, train_keys=train_h5_keys, real_to_h5_map=real_to_h5,
     )
 
-    # ---------------------------------------------------------
-    # 3. 构建模型
-    # ---------------------------------------------------------
     model = build_umil_model(config, is_training=True, logger=logger)
                          
     for param in model.visual.parameters():
         param.requires_grad = False
-    print("❄️  已冻结 CLIP 视觉编码器，显存压力已降低！")
     
     model = model.cuda()
 
@@ -112,12 +100,8 @@ def main(config, args):
     with open('labels/action_vocabulary.txt', 'r', encoding='utf-8') as f:
         action_classes = [line.strip() for line in f if line.strip()]
     text_prompts = [f"A video of a person {action}" for action in action_classes]
-    logger.info(f"Loaded {len(text_prompts)} action prompts.")
     text_labels = clip.tokenize(text_prompts).cuda()
 
-    # ---------------------------------------------------------
-    # 4. 实例化引擎并执行训练
-    # ---------------------------------------------------------
     trainer = VideoTrainer(
         config=config, 
         args=args, 
@@ -161,5 +145,4 @@ if __name__ == '__main__':
     Path(config.OUTPUT).mkdir(parents=True, exist_ok=True)
     logger = create_logger(output_dir=config.OUTPUT, dist_rank=(dist.get_rank() if dist.is_initialized() else 0), name=f"{config.MODEL.ARCH}")
     
-    # 显式将 args 传入 main 以避免对全局变量的依赖
     main(config, args)

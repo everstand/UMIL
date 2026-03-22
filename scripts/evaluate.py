@@ -2,7 +2,6 @@ import os
 import sys
 import logging
 import argparse
-import yaml
 import re
 
 # 1. 路径注入
@@ -28,7 +27,7 @@ def main():
     parser.add_argument('--config', required=True)
     parser.add_argument('--dataset', required=True, choices=['summe', 'tvsum'])
     parser.add_argument('--ckpt', required=True)
-    parser.add_argument('--test_keys', required=True, help='Path to tvsum.yml')
+    parser.add_argument('--test_keys', required=True, help='Path to split file (e.g., splits/tvsum.yml)')
     parser.add_argument('--opts', default=None, nargs=argparse.REMAINDER)
     args = parser.parse_args()
     
@@ -46,6 +45,9 @@ def main():
     logger.info(f"成功加载 Split-{split_idx}，共 {len(test_keys)} 个测试视频。")
         
     evaluator = VideoEvaluator(config, args.dataset, args.ckpt)
+    
+    # 🌟 补齐致命断层：驱动引擎执行测试
+    evaluator.run(test_keys=test_keys)
 
 if __name__ == '__main__':
     main()
