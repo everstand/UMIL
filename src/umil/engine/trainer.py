@@ -1,6 +1,7 @@
 import os
 import time
 import shutil
+import math
 import torch
 import torch.nn.functional as F
 from torch.cuda.amp import autocast
@@ -10,10 +11,7 @@ from utils.tools import AverageMeter, epoch_saving
 from umil.engine.evaluator import VideoEvaluator
 
 class VideoTrainer:
-    """
-    [Engine Layer] 弱监督视频摘要训练引擎
-    """
-    def __init__(self, config, args, model, optimizer, lr_scheduler, train_loader, text_labels, scaler, logger, writer, test_h5_keys):
+    def __init__(self, config, args, model, optimizer, lr_scheduler, train_loader, text_labels, scaler, logger, writer, val_h5_keys=None, test_h5_keys=None):
         self.config = config
         self.args = args
         self.model = model
@@ -24,6 +22,8 @@ class VideoTrainer:
         self.scaler = scaler
         self.logger = logger
         self.writer = writer
+        
+        self.val_h5_keys = val_h5_keys
         self.test_h5_keys = test_h5_keys
         self.use_amp = (config.TRAIN.OPT_LEVEL != 'O0')
 
@@ -32,14 +32,19 @@ class VideoTrainer:
         self.optimizer.zero_grad()
         
         num_steps = len(self.train_loader)
+        acc_steps = self.config.TRAIN.ACCUMULATION_STEPS
+        updates_per_epoch = math.ceil(num_steps / acc_steps)
+        update_step = 0
+        
         batch_time = AverageMeter()
-        tot_loss_meter = AverageMeter()
-        mil_loss_meter = AverageMeter()
+        meter_tot_raw = AverageMeter()
+        meter_tot_scaled = AverageMeter()
+        meter_mil = AverageMeter()
+        meter_sparse = AverageMeter()
 
         end = time.time()
         
         for idx, batch_data in enumerate(self.train_loader):
-            torch.cuda.empty_cache()
             images = batch_data["imgs"].cuda(non_blocking=True)
             label_id = batch_data["label"].cuda(non_blocking=True)
             
@@ -62,62 +67,80 @@ class VideoTrainer:
                 
                 tau = 1.0  
                 bag_logits = tau * torch.logsumexp(smoothed_logits_tc / tau, dim=1)
+                
                 loss_mil = F.binary_cross_entropy_with_logits(bag_logits, labels.float())
-                
                 prob_tc = torch.sigmoid(smoothed_logits_tc)  
-                sparsity_loss = prob_tc.mean()
+                loss_sparse = prob_tc.mean()
                 
-                total_loss = loss_mil + 0.005 * sparsity_loss
-                total_loss = total_loss / self.config.TRAIN.ACCUMULATION_STEPS
+                loss_tot_raw = loss_mil + 0.005 * loss_sparse
+                loss_tot_scaled = loss_tot_raw / acc_steps
 
-            self.scaler.scale(total_loss).backward()
-                
-            if (idx + 1) % self.config.TRAIN.ACCUMULATION_STEPS == 0:
+            self.scaler.scale(loss_tot_scaled).backward()
+            
+            should_step = ((idx + 1) % acc_steps == 0) or ((idx + 1) == num_steps)
+            
+            if should_step:
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
                 self.optimizer.zero_grad()
-                self.lr_scheduler.step_update(epoch * num_steps + idx)
+                
+                self.lr_scheduler.step_update(epoch * updates_per_epoch + update_step)
+                update_step += 1
 
             torch.cuda.synchronize()
             
-            tot_loss_meter.update(total_loss.item(), bz)
-            mil_loss_meter.update(loss_mil.item(), bz)
+            meter_tot_raw.update(loss_tot_raw.item(), bz)
+            meter_tot_scaled.update(loss_tot_scaled.item(), bz)
+            meter_mil.update(loss_mil.item(), bz)
+            meter_sparse.update(loss_sparse.item(), bz)
+            
             batch_time.update(time.time() - end)
             end = time.time()
 
             if idx % self.config.PRINT_FREQ == 0:
                 lr = self.optimizer.param_groups[0]['lr']
                 self.logger.info(
-                    f'Train: [{epoch}/{self.config.TRAIN.EPOCHS}][{idx}/{num_steps}]\t'
-                    f'lr {lr:.6f}\t'
-                    f'Tot Loss {tot_loss_meter.val:.4f} ({tot_loss_meter.avg:.4f})\t'
-                    f'MIL Loss {mil_loss_meter.val:.4f} ({mil_loss_meter.avg:.4f})')
+                    f'Train: [{epoch}/{self.config.TRAIN.EPOCHS}][{idx}/{num_steps}] '
+                    f'lr: {lr:.6f} '
+                    f'Loss: {meter_tot_raw.val:.4f} '
+                    f'MIL: {meter_mil.val:.4f} '
+                    f'Sparse: {meter_sparse.val:.4f}'
+                )
                     
-        return tot_loss_meter.avg
+        return meter_tot_raw.avg, meter_mil.avg, meter_sparse.avg
 
     def run(self, start_epoch):
-        best_f1_score = 0.0
+        best_val_f1 = 0.0
         
+        if self.val_h5_keys is None or len(self.val_h5_keys) == 0:
+            raise ValueError("Error: val_h5_keys is empty.")
+
         for epoch in range(start_epoch, self.config.TRAIN.EPOCHS):
-            train_loss = self.train_one_epoch(epoch)
-            self.writer.add_scalar('Loss/Train', train_loss, epoch)
+            tot_raw, mil, sparse = self.train_one_epoch(epoch)
+            
+            self.writer.add_scalar('Loss/Total_Raw', tot_raw, epoch)
+            self.writer.add_scalar('Loss/MIL', mil, epoch)
+            self.writer.add_scalar('Loss/Sparse', sparse, epoch)
             
             temp_ckpt_path = os.path.join(self.config.OUTPUT, "temp_checkpoint.pth")
             epoch_saving(self.config, epoch, self.model, 0.0, self.optimizer, self.lr_scheduler, self.logger, self.config.OUTPUT, is_best=False)
-            
             shutil.move(os.path.join(self.config.OUTPUT, f"ckpt_epoch_{epoch}.pth"), temp_ckpt_path)
             
             evaluator = VideoEvaluator(self.config, self.args.dataset, temp_ckpt_path)
-            current_f1, current_div = evaluator.run(test_keys=self.test_h5_keys)
+            val_f1, val_div = evaluator.run(test_keys=self.val_h5_keys)
             
-            self.writer.add_scalar('Metric/F1_Score', current_f1, epoch)
+            self.writer.add_scalar('Metric_Val/F1_Score', val_f1, epoch)
+            self.writer.add_scalar('Metric_Val/Diversity', val_div, epoch)
             
-            if current_f1 > best_f1_score:
-                best_f1_score = current_f1
+            if val_f1 > best_val_f1:
+                best_val_f1 = val_f1
                 best_ckpt_name = os.path.join(self.config.OUTPUT, f"best_model_split{self.args.split_id}.pth")
-                
                 shutil.copyfile(temp_ckpt_path, best_ckpt_name)
-                self.logger.info(f"New best F1: {best_f1_score:.4f}, saved to {best_ckpt_name}")
+                self.logger.info(f"Epoch {epoch} | Best Val F1 updated: {best_val_f1:.4f}")
                 
         self.writer.close()
-        self.logger.info(f"Training completed. Best F1: {best_f1_score:.4f}")
+        
+        final_ckpt_path = os.path.join(self.config.OUTPUT, f"best_model_split{self.args.split_id}.pth")
+        test_evaluator = VideoEvaluator(self.config, self.args.dataset, final_ckpt_path)
+        test_f1, test_div = test_evaluator.run(test_keys=self.test_h5_keys)
+        self.logger.info(f"Test F1: {test_f1:.4f} | Test Diversity: {test_div:.4f}")
