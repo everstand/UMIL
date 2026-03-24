@@ -1,103 +1,35 @@
-import copy
-import torch.optim as optim
-from timm.scheduler.cosine_lr import CosineLRScheduler
-import torch.distributed as dist
-
-def is_main_process():
-    return dist.get_rank() == 0
-
-def check_keywords_in_name(name, keywords=()):
-    isin = False
-    for keyword in keywords:
-        if keyword in name:
-            isin = True
-    return isin
-
-def set_weight_decay(model, skip_list=(), skip_keywords=(), weight_decay=0.001, lr=2e-6, have=(), not_have=()):
-    has_decay = []
-    no_decay = []
-    for name, param in model.named_parameters():
-        if not param.requires_grad:
-            continue  # frozen weights
-        if len(have) > 0 and not check_keywords_in_name(name, have):
-            continue
-        if len(not_have) > 0 and check_keywords_in_name(name, not_have):
-            continue
-        if len(param.shape) == 1 or name.endswith(".bias") or (name in skip_list) or \
-                check_keywords_in_name(name, skip_keywords):
-            no_decay.append(param)
-        else:
-            has_decay.append(param)
-
-    return [{'params': has_decay, 'weight_decay': weight_decay, 'lr': lr},
-            {'params': no_decay, 'weight_decay': 0., 'lr': lr}]
-
+import torch
 
 def fix_text(model):
+    """
+    冻结文本编码器的物理契约
+    遍历模型参数，将属于 text 端（或被明确要求冻结）的参数梯度截断
+    """
     for name, param in model.named_parameters():
-        if "visual." in name or "mit" in name or "prompts" in name or "_head" in name:
-            continue
-        else:
-            param.requires_grad=False
+        if "token_embedding" in name or "transformer" in name or "text_projection" in name or "ln_final" in name or "positional_embedding" in name:
+            param.requires_grad = False
 
 def build_optimizer(config, model):
-    model = model.module if hasattr(model, 'module') else model
+    """
+    基于绝对物理属性 (requires_grad) 的极简优化器组装
+    """
+    # 处理 DDP/DP 模型的 module 嵌套封装
+    base_model = model.module if hasattr(model, 'module') else model
+
+    # 1. 严格执行冻结契约 (如果配置要求冻结文本端)
+    if getattr(config.MODEL, 'FIX_TEXT', True):
+        fix_text(base_model)
+
+    # 2. 探针：仅收集计算图中真正需要求导的活跃节点
+    active_params = [p for p in base_model.parameters() if p.requires_grad]
     
-    # fix text
-    if config.MODEL.FIX_TEXT:
-        fix_text(model)
-
-    # set decay and lr
-    skip = {}
-    skip_keywords = {}
-    if hasattr(model, 'no_weight_decay'):
-        skip = model.no_weight_decay()
-    if hasattr(model, 'no_weight_decay_keywords'):
-        skip_keywords = model.no_weight_decay_keywords()
-    clip_parameters = set_weight_decay(model, skip, skip_keywords, 
-        weight_decay=config.TRAIN.WEIGHT_DECAY, lr=config.TRAIN.LR,
-        have=(), not_have=("prompts", "mit", "message_", "anomaly_head", "cluster_head",)
+    # 3. 组装极简 AdamW 引擎
+    optimizer = torch.optim.AdamW(
+        active_params,
+        lr=config.TRAIN.LR,
+        weight_decay=config.TRAIN.WEIGHT_DECAY,
+        betas=(0.9, 0.98),
+        eps=1e-8,
     )
-    msg_parameters = set_weight_decay(model, skip, skip_keywords,
-        weight_decay=config.TRAIN.WEIGHT_DECAY, lr=config.TRAIN.LR,
-        have=("message_",), not_have=()
-    )
-    mit_parameters = set_weight_decay(model, skip, skip_keywords,
-        weight_decay=config.TRAIN.WEIGHT_DECAY, lr=config.TRAIN.LR,
-        have=("mit",), not_have=()
-    )
-    prompts_parameters = set_weight_decay(model, skip, skip_keywords, 
-        weight_decay=config.TRAIN.WEIGHT_DECAY, lr=config.TRAIN.LR,
-        have=("prompts",), not_have=()
-    )
-    anomaly_parameters = set_weight_decay(model, skip, skip_keywords,
-          weight_decay=config.TRAIN.WEIGHT_DECAY, lr=config.TRAIN.LR*0.1,
-          have=("anomaly_head",), not_have=()
-          )
-    cluster_parameters = set_weight_decay(model, skip, skip_keywords,
-          weight_decay=config.TRAIN.WEIGHT_DECAY, lr=config.TRAIN.LR,
-          have=("cluster_head",), not_have=()
-          )
-
-    optimizer = optim.AdamW(clip_parameters + mit_parameters + prompts_parameters + msg_parameters + anomaly_parameters,
-                        betas=(0.9, 0.98), eps=1e-8,)
-    optimizer_umil = optim.AdamW(cluster_parameters + anomaly_parameters,
-                            betas=(0.9, 0.98), eps=1e-8,)
-    return optimizer, optimizer_umil
-
-
-def build_scheduler(config, optimizer, n_iter_per_epoch):
-    num_steps = int(config.TRAIN.EPOCHS * n_iter_per_epoch)
-    warmup_steps = int(config.TRAIN.WARMUP_EPOCHS * n_iter_per_epoch)
-
-    lr_scheduler = CosineLRScheduler(
-        optimizer,
-        t_initial=num_steps,
-        lr_min=config.TRAIN.LR / 100,
-        warmup_lr_init=0,
-        warmup_t=warmup_steps,
-        cycle_limit=1,
-        t_in_epochs=False,
-    )
-
-    return lr_scheduler
+    
+    return optimizer
