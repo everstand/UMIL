@@ -1,6 +1,9 @@
 import os
 import sys
 
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="mmcv")
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC_DIR = os.path.join(BASE_DIR, 'src')
 if SRC_DIR not in sys.path:
@@ -37,7 +40,7 @@ def parse_option():
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', '-cfg', required=True, type=str, default='configs/summe/32_5.yaml')
     parser.add_argument("--opts", help="Modify config options", default=None, nargs='+')
-    parser.add_argument('--output', type=str, default="exp")
+    parser.add_argument('--output', type=str, default="outputs")
     parser.add_argument('--resume', type=str)
     parser.add_argument('--pretrained', type=str)
     parser.add_argument('--only_test', action='store_true')

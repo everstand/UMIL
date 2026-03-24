@@ -4,6 +4,9 @@ import logging
 import argparse
 import re
 
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="mmcv")
+
 # 1. 路径注入
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC_DIR = os.path.join(BASE_DIR, 'src')

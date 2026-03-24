@@ -243,7 +243,7 @@ def build_model(state_dict: dict, T=8, droppath=0., use_checkpoint=False, logger
             del state_dict[key]
 
     msg = model.load_state_dict(state_dict,strict=False)
-    print(f"load pretrained CLIP: {msg}")
+    # print(f"load pretrained CLIP: {msg}")
     
     return model.eval()
 

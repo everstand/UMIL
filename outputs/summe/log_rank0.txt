@@ -1,0 +1,7 @@
+[2026-03-24 09:02:29 ViT-B/32] (builder.py 21): INFO ==> Building UMIL Model | Is_Train: True | T: 16 | MIT: 1 | Prompts: 2 | Alpha: 0.1
+[2026-03-24 09:03:26 ViT-B/32] (trainer.py 91): INFO Train: [0/50][0/20]	lr 0.000000	Tot Loss 1.7262 (1.7262)	MIL Loss 6.9001 (6.9001)
+[2026-03-24 09:06:05 ViT-B/32] (trainer.py 120): INFO New best F1: 0.4376, saved to outputs/summe/best_model_split0.pth
+[2026-03-24 09:06:07 ViT-B/32] (trainer.py 91): INFO Train: [1/50][0/20]	lr 0.000002	Tot Loss 1.9906 (1.9906)	MIL Loss 7.9576 (7.9576)
+[2026-03-24 09:08:26 ViT-B/32] (trainer.py 91): INFO Train: [2/50][0/20]	lr 0.000003	Tot Loss 2.7158 (2.7158)	MIL Loss 10.8583 (10.8583)
+[2026-03-24 09:10:25 ViT-B/32] (trainer.py 91): INFO Train: [3/50][0/20]	lr 0.000005	Tot Loss 1.4602 (1.4602)	MIL Loss 5.8363 (5.8363)
+[2026-03-24 09:12:27 ViT-B/32] (trainer.py 120): INFO New best F1: 0.4403, saved to outputs/summe/best_model_split0.pth
