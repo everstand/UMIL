@@ -20,7 +20,7 @@ _C.DATA.NUM_CLIPS = 16
 _C.DATA.NUM_FRAMES = 5
 _C.DATA.FRAME_INTERVAL = 6
 _C.DATA.NUM_CLASSES = 400
-_C.DATA.LABEL_LIST = 'labels/action_vocabulary.txt' # 指向动态生成的伪标签词表
+_C.DATA.LABEL_LIST = 'labels/action_vocabulary.txt'
 _C.DATA.FILENAME_TMPL = 'img_{:08}.jpg'
 
 # -----------------------------------------------------------------------------
@@ -50,6 +50,10 @@ _C.TRAIN.OPT_LEVEL = 'O1'
 _C.TRAIN.AUTO_RESUME = False
 _C.TRAIN.USE_CHECKPOINT = False
 
+_C.TRAIN.W_SPARSE = 0.005
+_C.TRAIN.W_TV = 0.05
+_C.TRAIN.W_PEAK = 0.1
+
 # -----------------------------------------------------------------------------
 # Augmentation settings
 # -----------------------------------------------------------------------------
@@ -70,13 +74,14 @@ _C.TEST.NUM_CROP = 1
 _C.TEST.ONLY_TEST = False
 
 # -----------------------------------------------------------------------------
-# Evaluation & Ablation settings (🌟 新增的消融实验引擎节点)
+# Evaluation & Ablation settings
 # -----------------------------------------------------------------------------
 _C.EVAL = CN()
-_C.EVAL.ABLATION_MODE = 'E3' # 可选: 'E0', 'E1', 'E2', 'E3'
-_C.EVAL.TOP_K = 3            # 语义聚合的并发动作假设数量
-_C.EVAL.ALPHA = 0.5          # S_t = αP_t + (1-α)R_t 中的融合权重
+_C.EVAL.ABLATION_MODE = 'E1'
+_C.EVAL.TOP_K = 3
+_C.EVAL.ALPHA = 0.5
 _C.EVAL.REP_SPACE = 'raw'
+
 # -----------------------------------------------------------------------------
 # Misc
 # -----------------------------------------------------------------------------
@@ -107,7 +112,7 @@ def update_config(config, args):
     config.defrost()
     if args.opts:
         config.merge_from_list(args.opts)
-    # merge from specific arguments
+    
     if getattr(args, 'batch_size', None):
         config.TRAIN.BATCH_SIZE = args.batch_size
     if getattr(args, 'pretrained', None):
@@ -121,13 +126,11 @@ def update_config(config, args):
     if getattr(args, 'only_test', None):
         config.TEST.ONLY_TEST = True
     
-    # 防御性读取 local_rank，兼容非分布式运行环境
     config.LOCAL_RANK = getattr(args, 'local_rank', 0) 
     config.freeze()
 
 
 def get_config(args):
-    """Get a yacs CfgNode object with default values."""
     config = _C.clone()
     update_config(config, args)
     return config

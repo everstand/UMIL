@@ -1,0 +1,17 @@
+==> 成功加载 Split-4 | Train: 20 视频 | Test: 5 视频
+成功加载 Split-4，共 5 个测试视频。
+Initialize evaluator | Mode: E1 | K: 3 | Alpha: 0.5 | R_t Space: raw
+==> 成功构建 SUMME 身份双向字典 | 容量: 25 项
+Loading checkpoint from outputs/summe/best_model_split4.pth
+==> Building UMIL Model | Is_Train: False | T: 16 | MIT: 1 | Prompts: 2 | Alpha: 0.1
+=> merge config from configs/summe/32_5.yaml
+Traceback (most recent call last):
+  File "scripts/evaluate.py", line 56, in <module>
+    main()
+  File "scripts/evaluate.py", line 53, in main
+    evaluator.run(test_keys=test_keys)
+  File "/data01/chim/code/UMIL/src/umil/engine/evaluator.py", line 192, in run
+    model = build_umil_model(self.config, state_dict=new_state_dict, is_training=False, logger=logger).to(self.device)
+  File "/data01/chim/code/UMIL/src/models/builder.py", line 41, in build_umil_model
+    model = xclip.build_model(
+AttributeError: module 'models.xclip' has no attribute 'build_model'

@@ -6,6 +6,7 @@ import decord
 import logging
 from tqdm import tqdm
 import clip
+import torch.nn.functional as F
 
 from umil.metrics.summary_protocol import generate_summary
 from umil.metrics.fscore import evaluate_summary
@@ -18,8 +19,34 @@ from models.builder import build_umil_model
 
 logger = logging.getLogger(__name__)
 
+def preprocess_eval_frames(frames_numpy, input_size, device):
+    """
+    与 MMCV train_pipeline 严格数学等价的视频帧预处理
+    输入: frames_numpy Shape: (T, H, W, C), 值域 [0, 255]
+    输出: frames_tensor Shape: (1, T, C, H, W)
+    """
+    tensors = torch.from_numpy(frames_numpy).permute(0, 3, 1, 2).float().to(device)
+    
+    scale_resize = int(256 / 224 * input_size)
+    _, _, h, w = tensors.shape
+    if h < w:
+        new_h, new_w = scale_resize, int(w * scale_resize / h)
+    else:
+        new_h, new_w = int(h * scale_resize / w), scale_resize
+        
+    tensors = F.interpolate(tensors, size=(new_h, new_w), mode='bilinear', align_corners=False)
+    
+    top = (new_h - input_size) // 2
+    left = (new_w - input_size) // 2
+    tensors = tensors[:, :, top:top+input_size, left:left+input_size]
+    
+    mean = torch.tensor([123.675, 116.28, 103.53], dtype=tensors.dtype, device=tensors.device).view(1, 3, 1, 1)
+    std = torch.tensor([58.395, 57.12, 57.375], dtype=tensors.dtype, device=tensors.device).view(1, 3, 1, 1)
+    tensors = (tensors - mean) / std
+    
+    return tensors.unsqueeze(0)
+
 class AverageMeter(object):
-    """计算并存储平均值和当前值"""
     def __init__(self):
         self.reset()
     def reset(self):
@@ -38,27 +65,23 @@ class VideoEvaluator:
         self.checkpoint_path = checkpoint_path
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
-        # 1. 防御性配置读取与双流形参数解析
         eval_cfg = getattr(config, 'EVAL', None)
-        self.ablation_mode = getattr(eval_cfg, 'ABLATION_MODE', 'E3') if eval_cfg else 'E3'
+        self.ablation_mode = getattr(eval_cfg, 'ABLATION_MODE', 'E1') if eval_cfg else 'E1'
         self.k_classes     = int(getattr(eval_cfg, 'TOP_K', 3)) if eval_cfg else 3
         self.alpha         = float(getattr(eval_cfg, 'ALPHA', 0.5)) if eval_cfg else 0.5
         self.rep_space     = getattr(eval_cfg, 'REP_SPACE', 'raw') if eval_cfg else 'raw'
         
-        logger.info(f"🚀 初始化评估引擎 | 模式: {self.ablation_mode} | K: {self.k_classes} | Alpha: {self.alpha} | R_t空间: {self.rep_space}")
+        logger.info(f"Initialize evaluator | Mode: {self.ablation_mode} | K: {self.k_classes} | Alpha: {self.alpha} | R_t Space: {self.rep_space}")
 
-        # 2. 强制语义同源：从唯一源读取动作词表
         vocab_path = 'labels/action_vocabulary.txt'
         if not os.path.exists(vocab_path):
-            raise FileNotFoundError(f"🚨 找不到统一动作词表文件: {vocab_path}，请确保伪标签生成逻辑已先运行。")
+            raise FileNotFoundError(f"Missing vocabulary file: {vocab_path}")
         with open(vocab_path, 'r', encoding='utf-8') as f:
             self.candidate_actions = [line.strip() for line in f if line.strip()]
 
-        # 3. 实例化组件
         self.smoothing_prior = TemporalSmoothingPrior(kernel_size=3).to(self.device)
         self.rep_scorer = RepresentationPrior().to(self.device)
         
-        # 4. 数据集路径校验
         if self.dataset_name == 'summe':
             self.h5_path = "data/eccv16_datasets/eccv16_dataset_summe_google_pool5.h5"
             self.video_dir = "data/SumMe/videos"
@@ -66,18 +89,18 @@ class VideoEvaluator:
             self.h5_path = "data/eccv16_datasets/eccv16_dataset_tvsum_google_pool5.h5"
             self.video_dir = "data/TVSum/videos"
         else:
-            raise ValueError(f"🚨 不支持的数据集: {dataset_name}")
+            raise ValueError(f"Unsupported dataset: {dataset_name}")
 
         self.h5_to_real, self.real_to_h5 = build_identity_maps(self.dataset_name, self.h5_path)
 
-
     def _predict_video_scores(self, model, video_path, text_tokens):
-        vr = decord.VideoReader(video_path, width=224, height=224)
+        vr = decord.VideoReader(video_path)
         total_frames = len(vr)
         
         clip_len = self.config.DATA.NUM_FRAMES
         frame_interval = self.config.DATA.FRAME_INTERVAL
         actual_clip_len = clip_len * frame_interval
+        input_size = self.config.DATA.INPUT_SIZE
 
         all_clip_logits = []
         all_clip_features_raw = []
@@ -94,14 +117,13 @@ class VideoEvaluator:
                 frame_indices.extend([frame_indices[-1]] * (clip_len - len(frame_indices)))
                 
             frames = vr.get_batch(frame_indices).asnumpy()
-            frames_tensor = torch.from_numpy(frames).float().permute(0, 3, 1, 2).unsqueeze(0).to(self.device)
-            frames_tensor = frames_tensor / 255.0
+            frames_tensor = preprocess_eval_frames(frames, input_size, self.device)
             
             with torch.no_grad():
                 outputs = model(frames_tensor, text_tokens)
                 
             if not all(k in outputs for k in ('y', 'feature_v_raw', 'feature_v_proj')):
-                raise KeyError("模型输出缺失主键 'y', 'feature_v_raw' 或 'feature_v_proj'")
+                raise KeyError("Missing required keys in model outputs ('y', 'feature_v_raw', 'feature_v_proj')")
             
             all_clip_logits.append(outputs['y'])
             all_clip_features_raw.append(outputs['feature_v_raw'])
@@ -134,21 +156,19 @@ class VideoEvaluator:
                 if self.ablation_mode == 'E2':
                     final_clip_scores = p_scores
                 elif self.ablation_mode == 'E3':
-                    # 依据配置进行流形空间路由
                     if self.rep_space == 'raw':
                         selected_features = video_features_raw
                     elif self.rep_space == 'proj':
                         selected_features = video_features_proj
                     else:
-                        raise ValueError(f"未知的 R_t 空间配置: {self.rep_space}")
+                        raise ValueError(f"Unknown R_t space configuration: {self.rep_space}")
 
                     video_features_3d = selected_features.detach().unsqueeze(0)
                     r_scores = self.rep_scorer(video_features_3d).squeeze(0).cpu().numpy()
                     
-                    # 终极融合: S_t = αP_t + (1-α)R_t
                     final_clip_scores = self.alpha * p_scores + (1.0 - self.alpha) * r_scores
                 else:
-                    raise ValueError(f"未知的消融模式: {self.ablation_mode}")
+                    raise ValueError(f"Unknown ablation mode: {self.ablation_mode}")
 
         frame_scores = []
         for score, count in zip(final_clip_scores, clip_frame_counts):
@@ -159,12 +179,12 @@ class VideoEvaluator:
     def run(self, test_keys):
         """执行评估流水线"""
         if not test_keys or len(test_keys) == 0:
-            raise ValueError("🚨 必须提供 test_keys，严禁全量盲测。")
+            raise ValueError("test_keys is required.")
 
         if not os.path.exists(self.checkpoint_path):
-            raise FileNotFoundError(f"🚨 找不到权重文件: {self.checkpoint_path}")
+            raise FileNotFoundError(f"Checkpoint not found: {self.checkpoint_path}")
 
-        logger.info(f"==> Loading checkpoint from {self.checkpoint_path}")
+        logger.info(f"Loading checkpoint from {self.checkpoint_path}")
         checkpoint = torch.load(self.checkpoint_path, map_location='cpu')
         state_dict = checkpoint['model'] if 'model' in checkpoint else checkpoint
         new_state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
@@ -181,19 +201,17 @@ class VideoEvaluator:
         with h5py.File(self.h5_path, 'r') as h5_data:
             keys = list(h5_data.keys())
             for key in tqdm(keys, desc=f"Eval {self.dataset_name.upper()}", ncols=80, leave=False):
-                # 直接用 H5 的内部键进行身份拦截
                 if key not in test_keys:
                     continue
                     
-                # 纯粹的 Adapter 翻译：不再有 if dataset_name == ...
                 if key not in self.h5_to_real:
-                    raise KeyError(f"身份适配字典缺失 H5 键值: {key}")
+                    raise KeyError(f"Missing H5 key in adapter map: {key}")
                 real_name = self.h5_to_real[key]
                     
                 try:
                     video_path = os.path.join(self.video_dir, f"{real_name}.mp4")
                     if not os.path.exists(video_path):
-                        raise FileNotFoundError(f"找不到视频物理文件: {video_path}")
+                        raise FileNotFoundError(f"Video file not found: {video_path}")
 
                     n_frames_h5 = h5_data[key]['n_frames'][()]
                     positions = h5_data[key]['picks'][()]
@@ -202,22 +220,19 @@ class VideoEvaluator:
                     nfps = h5_data[key]['n_frame_per_seg'][()].tolist()
                     seq_features = h5_data[key]['features'][()]
 
-                    # 前向推理
                     frame_scores = self._predict_video_scores(model, video_path, text_tokens)
                     machine_summary = generate_summary(frame_scores, cps, n_frames_h5, nfps, positions)
 
-                    # 评测 F1
                     eval_metric = 'avg' if self.dataset_name == 'tvsum' else 'max'
                     f1 = evaluate_summary(machine_summary, user_summary, eval_metric=eval_metric)
                     f1_meter.update(f1)
 
-                    # 严格对齐 Adapter 层
                     positions = np.asarray(positions).astype(np.int64)
                     positions = positions[positions < len(machine_summary)]
 
                     if len(positions) != len(seq_features):
                         raise ValueError(
-                            f"🚨 Adapter层未对齐: 物理抽帧点数量({len(positions)}) vs 视觉特征序列长度({len(seq_features)})"
+                            f"Adapter mapping mismatch: {len(positions)} physical picks vs {len(seq_features)} visual features"
                         )
 
                     machine_summary_feature_level = machine_summary[positions]

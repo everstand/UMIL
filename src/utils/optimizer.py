@@ -1,4 +1,5 @@
 import torch
+from timm.scheduler.cosine_lr import CosineLRScheduler
 
 def fix_text(model):
     """
@@ -32,4 +33,24 @@ def build_optimizer(config, model):
         eps=1e-8,
     )
     
-    return optimizer
+    # 匹配 train.py 中的解包契约: optimizer, _ = build_optimizer(...)
+    return optimizer, None
+
+def build_scheduler(config, optimizer, n_iter_per_epoch):
+    """
+    构建余弦退火学习率调度器
+    """
+    num_steps = int(config.TRAIN.EPOCHS * n_iter_per_epoch)
+    warmup_steps = int(getattr(config.TRAIN, 'WARMUP_EPOCHS', 5) * n_iter_per_epoch)
+
+    lr_scheduler = CosineLRScheduler(
+        optimizer,
+        t_initial=num_steps,
+        lr_min=config.TRAIN.LR / 100,
+        warmup_lr_init=0,
+        warmup_t=warmup_steps,
+        cycle_limit=1,
+        t_in_epochs=False,
+    )
+
+    return lr_scheduler

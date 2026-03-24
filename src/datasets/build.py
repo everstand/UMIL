@@ -200,7 +200,6 @@ class BaseDataset(Dataset, metaclass=ABCMeta):
             results['label'] = onehot
 
         aug1 = self.pipeline(results)
-        # import pdb;pdb.set_trace()
         if self.repeat > 1:
             aug2 = self.pipeline_(results)
             ret = {"imgs": torch.stack((aug1['imgs'], aug2['imgs']), 0),
@@ -348,8 +347,6 @@ class VideoDataset(BaseDataset):
         with open(self.ann_file, 'r') as fin:
             for line in fin:
                 line_split = line.strip().split()
-                import pdb;
-                pdb.set_trace()
                 if self.multi_class:
                     assert self.num_classes is not None
                     filename, label = line_split[0], line_split[1:]
@@ -402,10 +399,12 @@ def mmcv_collate(batch, samples_per_gpu=1):
 def build_dataloader(logger, config, train_keys=None, real_to_h5_map=None):
     scale_resize = int(256 / 224 * config.DATA.INPUT_SIZE)
 
-    # 魔改：加入 DecordInit 和 DecordDecode，不用图片，直接读视频！
     train_pipeline = [
         dict(type='DecordInit'),
-        dict(type='SampleFrames', clip_len=config.DATA.NUM_FRAMES, frame_interval=config.DATA.FRAME_INTERVAL, num_clips=config.DATA.NUM_CLIPS),
+        dict(type='SampleFrames',
+             clip_len=config.DATA.NUM_FRAMES,
+             frame_interval=config.DATA.FRAME_INTERVAL,
+             num_clips=config.DATA.NUM_CLIPS),
         dict(type='DecordDecode'),
         dict(type='Resize', scale=(-1, scale_resize)),
         dict(type='CenterCrop', crop_size=config.DATA.INPUT_SIZE),
@@ -415,22 +414,6 @@ def build_dataloader(logger, config, train_keys=None, real_to_h5_map=None):
         dict(type='ToTensor', keys=['imgs', 'label']),
     ]
 
-    train_pipeline_S = [
-        dict(type='DecordInit'),
-        dict(type='SampleFrames', clip_len=config.DATA.NUM_FRAMES, frame_interval=config.DATA.FRAME_INTERVAL, num_clips=config.DATA.NUM_CLIPS),
-        dict(type='DecordDecode'),
-        dict(type='Resize', scale=(-1, scale_resize)),
-        dict(type='MultiScaleCrop', input_size=config.DATA.INPUT_SIZE, scales=(1, 0.875, 0.75, 0.66), random_crop=False, max_wh_scale_gap=1),
-        dict(type='Resize', scale=(config.DATA.INPUT_SIZE, config.DATA.INPUT_SIZE), keep_ratio=False),
-        dict(type='ColorJitter', p=config.AUG.COLOR_JITTER),
-        dict(type='GrayScale', p=config.AUG.GRAY_SCALE),
-        dict(type='RandAugment', auto_augment='rand-n{}-m{}-mstd0.5'.format(2, 10)),
-        dict(type='Normalize', **img_norm_cfg),
-        dict(type='FormatShape', input_format='NCTHW'),
-        dict(type='Collect', keys=['imgs', 'label', 'vid', 'frame_inds', 'total_frames'], meta_keys=[]),
-        dict(type='ToTensor', keys=['imgs', 'label']),
-    ]
-        
     train_data = FrameDataset(
         ann_file=config.DATA.TRAIN_FILE,
         pipeline=train_pipeline,
@@ -439,32 +422,45 @@ def build_dataloader(logger, config, train_keys=None, real_to_h5_map=None):
         train_keys=train_keys,
         real_to_h5_map=real_to_h5_map
     )
-    
+
     num_tasks = dist.get_world_size() if dist.is_initialized() else 1
     global_rank = dist.get_rank() if dist.is_initialized() else 0
-    
-    sampler_train = torch.utils.data.DistributedSampler(
-        train_data, num_replicas=num_tasks, rank=global_rank, shuffle=True
-    ) if dist.is_initialized() else torch.utils.data.RandomSampler(train_data)
-    
+
+    if dist.is_initialized():
+        sampler_train_cls = partial(
+            torch.utils.data.DistributedSampler,
+            num_replicas=num_tasks,
+            rank=global_rank,
+            shuffle=True,
+        )
+        sampler_train = sampler_train_cls(train_data)
+        sampler_train_umil = sampler_train_cls(train_data)
+    else:
+        sampler_train = torch.utils.data.RandomSampler(train_data)
+        sampler_train_umil = torch.utils.data.RandomSampler(train_data)
+
     train_loader = DataLoader(
-        train_data, sampler=sampler_train,
-        batch_size=config.TRAIN.BATCH_SIZE, num_workers=4, pin_memory=True, drop_last=True,
+        train_data,
+        sampler=sampler_train,
+        batch_size=config.TRAIN.BATCH_SIZE,
+        num_workers=4,
+        pin_memory=True,
+        drop_last=True,
         collate_fn=partial(mmcv_collate, samples_per_gpu=config.TRAIN.BATCH_SIZE),
     )
-    
+
     train_loader_umil = DataLoader(
-        train_data, sampler=sampler_train,
-        batch_size=config.TRAIN.BATCH_SIZE_UMIL, num_workers=4, pin_memory=True, drop_last=True,
+        train_data,
+        sampler=sampler_train_umil,
+        batch_size=config.TRAIN.BATCH_SIZE_UMIL,
+        num_workers=4,
+        pin_memory=True,
+        drop_last=True,
         collate_fn=partial(mmcv_collate, samples_per_gpu=config.TRAIN.BATCH_SIZE_UMIL),
     )
-    
-    # 因为视频摘要我们不需要传统分类的 val set，这里我们先用 train_data 占位，避免原版代码报错
-    # 真正的评估 F-score 我们会写在主函数的 evaluate 里
-    val_data = train_data 
-    val_loader = DataLoader(
-        val_data, batch_size=2, num_workers=4, pin_memory=True, drop_last=False,
-        collate_fn=partial(mmcv_collate, samples_per_gpu=2),
-    )
+
+    # 当前训练主路径不使用传统 val_loader，显式返回 None，避免未来误用 train_data 伪装成 val_data
+    val_data = None
+    val_loader = None
 
     return train_data, val_data, val_data, train_loader, val_loader, val_loader, val_loader, train_loader_umil

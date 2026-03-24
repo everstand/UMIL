@@ -66,11 +66,13 @@ def parse_option():
 def main(config, args):
     train_h5_keys, test_h5_keys = load_split(args.split_file, args.split_id)
 
-    # 🌟 物理隔离：确定性 80/20 切分，从拓扑源头掐断数据泄露
-    train_h5_keys_sorted = sorted(list(train_h5_keys))
-    num_val = max(1, int(len(train_h5_keys_sorted) * 0.2))
-    val_h5_keys = train_h5_keys_sorted[:num_val]
-    train_h5_keys_real = train_h5_keys_sorted[num_val:]
+    rng = random.Random(config.SEED + args.split_id)
+    train_h5_keys_list = sorted(list(train_h5_keys))
+    rng.shuffle(train_h5_keys_list)
+
+    num_val = max(1, int(len(train_h5_keys_list) * 0.2))
+    val_h5_keys = train_h5_keys_list[:num_val]
+    train_h5_keys_real = train_h5_keys_list[num_val:]
 
     if args.dataset == 'summe':
         h5_path = "data/eccv16_datasets/eccv16_dataset_summe_google_pool5.h5"
@@ -82,7 +84,6 @@ def main(config, args):
     log_dir = os.path.join(config.OUTPUT, f"tensorboard_logs/split_{args.split_id}")
     writer = SummaryWriter(log_dir=log_dir)
 
-    # 仅将严格扣除 Val 后的 train_h5_keys_real 喂给 Dataloader
     _, _, _, train_loader, val_loader, _, _, train_loader_umil = build_dataloader(
         logger, config, train_keys=train_h5_keys_real, real_to_h5_map=real_to_h5,
     )
@@ -95,7 +96,9 @@ def main(config, args):
     model = model.cuda()
 
     optimizer, _ = build_optimizer(config, model)
-    lr_scheduler = build_scheduler(config, optimizer, len(train_loader))
+    
+    # 核心修复：学习率调度器绑定实际运行的 loader 长度
+    lr_scheduler = build_scheduler(config, optimizer, len(train_loader_umil))
 
     use_amp = (config.TRAIN.OPT_LEVEL != 'O0')
     scaler = GradScaler(enabled=use_amp)

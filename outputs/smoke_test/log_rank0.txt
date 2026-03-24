@@ -1,0 +1,53 @@
+[2026-03-24 17:00:58 ViT-B/32] (builder.py 21): INFO ==> Building UMIL Model | Is_Train: True | T: 16 | MIT: 1 | Prompts: 2 | Alpha: 0.1
+[2026-03-24 17:15:39 ViT-B/32] (builder.py 21): INFO ==> Building UMIL Model | Is_Train: True | T: 16 | MIT: 1 | Prompts: 2 | Alpha: 0.1
+[2026-03-24 17:32:35 ViT-B/32] (builder.py 21): INFO ==> Building UMIL Model | Is_Train: True | T: 16 | MIT: 1 | Prompts: 2 | Alpha: 0.1
+[2026-03-24 17:33:18 ViT-B/32] (trainer.py 130): INFO Train: [0/3][0/16]	lr 0.000000	Tot(Raw) 7.9158 (7.9158)	MIL 7.8957 (7.8957)	Sparse 0.9922 (0.9922)	TV 0.0008 (0.0008)	Peak 0.1511 (0.1511)
+[2026-03-24 17:36:04 ViT-B/32] (trainer.py 169): INFO New best Val F1: 0.4985, saved to outputs/smoke_test/best_model_split0.pth
+[2026-03-24 17:36:09 ViT-B/32] (trainer.py 130): INFO Train: [1/3][0/16]	lr 0.000000	Tot(Raw) 9.2307 (9.2307)	MIL 9.2178 (9.2178)	Sparse 0.9990 (0.9990)	TV 0.0002 (0.0002)	Peak 0.0795 (0.0795)
+[2026-03-24 17:38:24 ViT-B/32] (trainer.py 130): INFO Train: [2/3][0/16]	lr 0.000001	Tot(Raw) 6.2842 (6.2842)	MIL 6.2703 (6.2703)	Sparse 0.9858 (0.9858)	TV 0.0086 (0.0086)	Peak 0.0851 (0.0851)
+[2026-03-24 17:40:44 ViT-B/32] (trainer.py 173): INFO Training completed. Best Val F1: 0.4985. Starting test set evaluation.
+[2026-03-24 17:43:51 ViT-B/32] (trainer.py 177): INFO Test F1: 0.4146 | Test Diversity: 0.3787
+[2026-03-24 17:51:03 ViT-B/32] (builder.py 21): INFO ==> Building UMIL Model | Is_Train: True | T: 16 | MIT: 1 | Prompts: 2 | Alpha: 0.1
+[2026-03-24 17:51:45 ViT-B/32] (trainer.py 130): INFO Train: [0/3][0/32]	lr 0.000000	Tot(Raw) 8.7346 (8.7346)	MIL 8.7193 (8.7193)	Sparse 0.9966 (0.9966)	TV 0.0013 (0.0013)	Peak 0.1032 (0.1032)
+[2026-03-24 17:51:54 ViT-B/32] (trainer.py 130): INFO Train: [0/3][20/32]	lr 0.000000	Tot(Raw) 3.8812 (5.4187)	MIL 3.8541 (5.3954)	Sparse 0.7627 (0.8930)	TV 0.1056 (0.0455)	Peak 0.1809 (0.1653)
+[2026-03-24 17:54:25 ViT-B/32] (trainer.py 169): INFO New best Val F1: 0.5397, saved to outputs/smoke_test/best_model_split0.pth
+[2026-03-24 17:54:28 ViT-B/32] (trainer.py 130): INFO Train: [1/3][0/32]	lr 0.000000	Tot(Raw) 6.2075 (6.2075)	MIL 6.1923 (6.1923)	Sparse 0.9805 (0.9805)	TV 0.0196 (0.0196)	Peak 0.0934 (0.0934)
+[2026-03-24 17:54:41 ViT-B/32] (trainer.py 130): INFO Train: [1/3][20/32]	lr 0.000001	Tot(Raw) 4.3561 (5.5913)	MIL 4.3339 (5.5671)	Sparse 0.8433 (0.8976)	TV 0.0979 (0.0573)	Peak 0.1310 (0.1684)
+[2026-03-24 17:57:03 ViT-B/32] (trainer.py 169): INFO New best Val F1: 0.5476, saved to outputs/smoke_test/best_model_split0.pth
+[2026-03-24 17:57:06 ViT-B/32] (trainer.py 130): INFO Train: [2/3][0/32]	lr 0.000001	Tot(Raw) 4.5030 (4.5030)	MIL 4.4858 (4.4858)	Sparse 0.8433 (0.8433)	TV 0.0361 (0.0361)	Peak 0.1123 (0.1123)
+[2026-03-24 17:57:21 ViT-B/32] (trainer.py 130): INFO Train: [2/3][20/32]	lr 0.000001	Tot(Raw) 3.2261 (5.2125)	MIL 3.1982 (5.1921)	Sparse 0.7388 (0.8931)	TV 0.1718 (0.0430)	Peak 0.1561 (0.1380)
+[2026-03-24 17:59:36 ViT-B/32] (trainer.py 173): INFO Training completed. Best Val F1: 0.5476. Starting test set evaluation.
+[2026-03-24 18:02:14 ViT-B/32] (trainer.py 177): INFO Test F1: 0.5761 | Test Diversity: 0.5119
+[2026-03-24 18:07:29 ViT-B/32] (builder.py 21): INFO ==> Building UMIL Model | Is_Train: True | T: 16 | MIT: 1 | Prompts: 2 | Alpha: 0.1
+[2026-03-24 18:07:48 ViT-B/32] (trainer.py 130): INFO Train: [0/3][0/16]	lr 0.000000	Tot(Raw) 7.9007 (7.9007)	MIL 7.8957 (7.8957)	Sparse 0.9922 (0.9922)	TV 0.0008 (0.0008)	Peak 0.1511 (0.1511)
+[2026-03-24 18:10:45 ViT-B/32] (trainer.py 169): INFO New best Val F1: 0.5286, saved to outputs/smoke_test/best_model_split0.pth
+[2026-03-24 18:10:49 ViT-B/32] (trainer.py 130): INFO Train: [1/3][0/16]	lr 0.000000	Tot(Raw) 9.2228 (9.2228)	MIL 9.2178 (9.2178)	Sparse 0.9990 (0.9990)	TV 0.0002 (0.0002)	Peak 0.0795 (0.0795)
+[2026-03-24 18:13:01 ViT-B/32] (trainer.py 130): INFO Train: [2/3][0/16]	lr 0.000001	Tot(Raw) 6.2754 (6.2754)	MIL 6.2704 (6.2704)	Sparse 0.9858 (0.9858)	TV 0.0086 (0.0086)	Peak 0.0851 (0.0851)
+[2026-03-24 18:15:24 ViT-B/32] (trainer.py 173): INFO Training completed. Best Val F1: 0.5286. Starting test set evaluation.
+[2026-03-24 18:18:28 ViT-B/32] (trainer.py 177): INFO Test F1: 0.4107 | Test Diversity: 0.3816
+[2026-03-24 18:36:19 ViT-B/32] (builder.py 21): INFO ==> Building UMIL Model | Is_Train: True | T: 16 | MIT: 1 | Prompts: 2 | Alpha: 0.1
+[2026-03-24 18:36:51 ViT-B/32] (trainer.py 130): INFO Train: [0/15][0/16]	lr 0.000000	Tot(Raw) 7.9007 (7.9007)	MIL 7.8957 (7.8957)	Sparse 0.9922 (0.9922)	TV 0.0008 (0.0008)	Peak 0.1511 (0.1511)
+[2026-03-24 18:38:43 ViT-B/32] (trainer.py 173): INFO New best Val F1: 0.5286, saved to outputs/smoke_test/best_model_split0.pth
+[2026-03-24 18:38:47 ViT-B/32] (trainer.py 130): INFO Train: [1/15][0/16]	lr 0.000000	Tot(Raw) 9.2228 (9.2228)	MIL 9.2178 (9.2178)	Sparse 0.9990 (0.9990)	TV 0.0002 (0.0002)	Peak 0.0795 (0.0795)
+[2026-03-24 18:40:13 ViT-B/32] (trainer.py 130): INFO Train: [2/15][0/16]	lr 0.000001	Tot(Raw) 6.2754 (6.2754)	MIL 6.2704 (6.2704)	Sparse 0.9858 (0.9858)	TV 0.0086 (0.0086)	Peak 0.0851 (0.0851)
+[2026-03-24 18:41:47 ViT-B/32] (trainer.py 130): INFO Train: [3/15][0/16]	lr 0.000001	Tot(Raw) 5.0862 (5.0862)	MIL 5.0814 (5.0814)	Sparse 0.9580 (0.9580)	TV 0.0310 (0.0310)	Peak 0.1000 (0.1000)
+[2026-03-24 18:43:01 ViT-B/32] (trainer.py 130): INFO Train: [4/15][0/16]	lr 0.000002	Tot(Raw) 7.9982 (7.9982)	MIL 7.9933 (7.9933)	Sparse 0.9976 (0.9976)	TV 0.0005 (0.0005)	Peak 0.0794 (0.0794)
+[2026-03-24 18:44:15 ViT-B/32] (trainer.py 130): INFO Train: [5/15][0/16]	lr 0.000002	Tot(Raw) 4.9585 (4.9585)	MIL 4.9537 (4.9537)	Sparse 0.9678 (0.9678)	TV 0.0178 (0.0178)	Peak 0.0761 (0.0761)
+[2026-03-24 18:45:38 ViT-B/32] (trainer.py 130): INFO Train: [6/15][0/16]	lr 0.000002	Tot(Raw) 6.5971 (6.5971)	MIL 6.5922 (6.5922)	Sparse 0.9927 (0.9927)	TV 0.0010 (0.0010)	Peak 0.0762 (0.0762)
+[2026-03-24 18:47:01 ViT-B/32] (trainer.py 130): INFO Train: [7/15][0/16]	lr 0.000003	Tot(Raw) 5.5547 (5.5547)	MIL 5.5498 (5.5498)	Sparse 0.9707 (0.9707)	TV 0.0013 (0.0013)	Peak 0.1104 (0.1104)
+[2026-03-24 18:48:26 ViT-B/32] (trainer.py 130): INFO Train: [8/15][0/16]	lr 0.000003	Tot(Raw) 2.0274 (2.0274)	MIL 2.0239 (2.0239)	Sparse 0.6909 (0.6909)	TV 0.0429 (0.0429)	Peak 0.0694 (0.0694)
+[2026-03-24 18:49:46 ViT-B/32] (trainer.py 130): INFO Train: [9/15][0/16]	lr 0.000003	Tot(Raw) 0.8605 (0.8605)	MIL 0.8591 (0.8591)	Sparse 0.2781 (0.2781)	TV 0.0492 (0.0492)	Peak 0.0845 (0.0845)
+[2026-03-24 18:51:20 ViT-B/32] (trainer.py 130): INFO Train: [10/15][0/16]	lr 0.000004	Tot(Raw) 2.0444 (2.0444)	MIL 2.0409 (2.0409)	Sparse 0.7119 (0.7119)	TV 0.0280 (0.0280)	Peak 0.0705 (0.0705)
+[2026-03-24 18:52:52 ViT-B/32] (trainer.py 130): INFO Train: [11/15][0/16]	lr 0.000004	Tot(Raw) 1.3614 (1.3614)	MIL 1.3588 (1.3588)	Sparse 0.5088 (0.5088)	TV 0.0455 (0.0455)	Peak 0.0992 (0.0992)
+[2026-03-24 18:54:23 ViT-B/32] (trainer.py 130): INFO Train: [12/15][0/16]	lr 0.000005	Tot(Raw) 0.6752 (0.6752)	MIL 0.6737 (0.6737)	Sparse 0.2976 (0.2976)	TV 0.0783 (0.0783)	Peak 0.0775 (0.0775)
+[2026-03-24 18:56:15 ViT-B/32] (trainer.py 130): INFO Train: [13/15][0/16]	lr 0.000005	Tot(Raw) 0.9061 (0.9061)	MIL 0.9044 (0.9044)	Sparse 0.3347 (0.3347)	TV 0.0516 (0.0516)	Peak 0.0882 (0.0882)
+[2026-03-24 18:57:17 ViT-B/32] (trainer.py 130): INFO Train: [14/15][0/16]	lr 0.000005	Tot(Raw) 0.1706 (0.1706)	MIL 0.1705 (0.1705)	Sparse 0.0176 (0.0176)	TV 0.0137 (0.0137)	Peak 0.1076 (0.1076)
+[2026-03-24 18:58:46 ViT-B/32] (trainer.py 185): INFO Training completed. Best Val F1: 0.5286. Starting test set evaluation.
+[2026-03-24 19:00:40 ViT-B/32] (trainer.py 189): INFO Test F1: 0.4107 | Test Diversity: 0.3816
+[2026-03-24 19:19:43 ViT-B/32] (builder.py 21): INFO ==> Building UMIL Model | Is_Train: True | T: 16 | MIT: 1 | Prompts: 2 | Alpha: 0.1
+[2026-03-24 19:19:56 ViT-B/32] (trainer.py 130): INFO Train: [0/3][0/16]	lr 0.000000	Tot(Raw) 7.8957 (7.8957)	MIL 7.8957 (7.8957)	Sparse 0.9922 (0.9922)	TV 0.0008 (0.0008)	Peak 0.1511 (0.1511)
+[2026-03-24 19:21:48 ViT-B/32] (trainer.py 173): INFO New best Val F1: 0.5286, saved to outputs/smoke_test/best_model_split0.pth
+[2026-03-24 19:21:51 ViT-B/32] (trainer.py 130): INFO Train: [1/3][0/16]	lr 0.000000	Tot(Raw) 9.2178 (9.2178)	MIL 9.2178 (9.2178)	Sparse 0.9990 (0.9990)	TV 0.0002 (0.0002)	Peak 0.0795 (0.0795)
+[2026-03-24 19:23:16 ViT-B/32] (trainer.py 130): INFO Train: [2/3][0/16]	lr 0.000001	Tot(Raw) 6.2702 (6.2702)	MIL 6.2702 (6.2702)	Sparse 0.9858 (0.9858)	TV 0.0086 (0.0086)	Peak 0.0851 (0.0851)
+[2026-03-24 19:24:43 ViT-B/32] (trainer.py 185): INFO Training completed. Best Val F1: 0.5286. Starting test set evaluation.
+[2026-03-24 19:26:41 ViT-B/32] (trainer.py 189): INFO Test F1: 0.4107 | Test Diversity: 0.3816
