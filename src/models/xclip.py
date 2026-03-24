@@ -79,9 +79,9 @@ class XCLIP(CLIP):
         self.cache_text_features = None
         self.prompts_visual_ln = LayerNorm(vision_width)
         self.prompts_visual_proj = nn.Parameter(torch.randn(vision_width, embed_dim))
-        # for UDA
+        
+        # 语义投影头 (Semantic Projection Heads)
         self.head_video = nn.Linear(embed_dim, embed_dim)
-        self.u_head_video = nn.Linear(embed_dim, embed_dim)
 
         self.initialize_parameters()
     
@@ -132,20 +132,18 @@ class XCLIP(CLIP):
             self.train()
         return self.cache_text_features
 
-    def uda(self, video_feature, text_feature, train_flag):
-        v_fea = self.head_video(video_feature)
-        v_fea_u = self.u_head_video(video_feature)
+    def project_video_text_features(self, video_feature, text_feature):
+        v_main = self.head_video(video_feature)
 
-        v_fea = v_fea / v_fea.norm(dim=-1, keepdim=True)
-        v_fea_u = v_fea_u / v_fea_u.norm(dim=-1, keepdim=True)
-        t_fea = text_feature / text_feature.norm(dim=-1, keepdim=True)
+        v_main = v_main / v_main.norm(dim=-1, keepdim=True)
+        t_feat = text_feature / text_feature.norm(dim=-1, keepdim=True)
 
-        if train_flag:
-            v_fea_u_nograd = self.u_head_video(video_feature.detach())
-            t_fea_nograd = t_fea.detach()
-            return video_feature, v_fea, v_fea_u, t_fea, v_fea_u_nograd, v_fea_u_nograd, t_fea_nograd
-        else:
-            return video_feature, v_fea, v_fea_u, t_fea
+        out = {
+            "video_raw": video_feature,
+            "video_main": v_main,
+            "text": t_feat,
+        }
+        return out
 
     def forward(self, image, text):
         b = image.shape[0]
@@ -164,115 +162,16 @@ class XCLIP(CLIP):
 
         logit_scale = self.logit_scale.exp()
         
-        if self.training:
-            # 这里的计算逻辑完全保留，绝对不碰
-            _, v_features, v_features_u, t_features, \
-                _, v_features_u_n, t_features_n = self.uda(video_features, text_features, self.training)
+        proj = self.project_video_text_features(video_features, text_features)
+        v_features = proj["video_main"]
+        t_features = proj["text"]
 
-            logits = torch.einsum("bd,bkd->bk", v_features, logit_scale * t_features)
-            logits_u = torch.einsum("bd,bkd->bk", v_features_u, logit_scale * t_features)
-            logits_u_n = torch.einsum("bd,bkd->bk", v_features_u_n.to(t_features.dtype), logit_scale * t_features)
+        logits = torch.einsum("bd,bkd->bk", v_features, logit_scale * t_features)
 
-            # 仅仅在这里执行“扩充式”契约组装
-            outputs = {
-                "y": logits,
-                "feature_v_raw": video_features,
-                "feature_v_proj": v_features,
-                "feature_t": t_features,
-                "y_cluster_all": logits_u,
-                "y_cluster_all_nograd": logits_u_n,
-            }
-            return outputs
-            
-        else:
-            # 这里的计算逻辑完全保留，绝对不碰
-            video_features, v_features, v_features_u, t_features = self.uda(video_features, text_features, self.training)
-            
-            logits = torch.einsum("bd,bkd->bk", v_features, logit_scale * t_features)
-            logits_u = torch.einsum("bd,bkd->bk", v_features_u, logit_scale * t_features)
-
-            # 仅仅在这里执行“扩充式”契约组装
-            outputs = {
-                "y": logits,
-                "feature_v_raw": video_features,
-                "feature_v_proj": v_features,
-                "feature_t": t_features,  # 注意：这里统一定义为 t_features，纠正了你旧代码里混用 text_features 的隐患
-                "y_cluster_all": logits_u,
-            }
-            return outputs
-
-
-
-def build_model(state_dict: dict, T=8, droppath=0., use_checkpoint=False, logger=None, prompts_alpha=1e-1, prompts_layers=2, use_cache=True, mit_layers=4,):
-    vit = "visual.proj" in state_dict
-
-    if vit:
-        vision_width = state_dict["visual.conv1.weight"].shape[0]
-        vision_layers = len([k for k in state_dict.keys() if k.startswith("visual.") and k.endswith(".attn.in_proj_weight")])
-        vision_patch_size = state_dict["visual.conv1.weight"].shape[-1]
-        grid_size = round((state_dict["visual.positional_embedding"].shape[0] - 1) ** 0.5)
-        image_resolution = vision_patch_size * grid_size
-    else:
-        counts: list = [len(set(k.split(".")[2] for k in state_dict if k.startswith(f"visual.layer{b}"))) for b in [1, 2, 3, 4]]
-        vision_layers = tuple(counts)
-        
-        vision_width = state_dict["visual.layer1.0.conv1.weight"].shape[0]
-        output_width = round((state_dict["visual.attnpool.positional_embedding"].shape[0] - 1) ** 0.5)
-        vision_patch_size = None
-        assert output_width ** 2 + 1 == state_dict["visual.attnpool.positional_embedding"].shape[0]
-        image_resolution = output_width * 32
-
-    embed_dim = state_dict["text_projection"].shape[1]
-    context_length = state_dict["positional_embedding"].shape[0]
-    vocab_size = state_dict["token_embedding.weight"].shape[0]
-    transformer_width = state_dict["ln_final.weight"].shape[0]
-    transformer_heads = transformer_width // 64
-    transformer_layers = len(set(k.split(".")[2] for k in state_dict if k.startswith(f"transformer.resblocks")))
-
-    model = XCLIP(
-        embed_dim,
-        image_resolution, vision_layers, vision_width, vision_patch_size,
-        context_length, vocab_size, transformer_width, transformer_heads, transformer_layers,  
-        T=T, droppath=droppath, mit_layers=mit_layers,
-        prompts_alpha=prompts_alpha, prompts_layers=prompts_layers,
-        use_checkpoint=use_checkpoint, use_cache=use_cache,
-    )
-
-    for key in ["input_resolution", "context_length", "vocab_size", "mit.positional_embedding"]:
-        if key in state_dict:
-            del state_dict[key]
-
-    msg = model.load_state_dict(state_dict,strict=False)
-    # print(f"load pretrained CLIP: {msg}")
-    
-    return model.eval()
-
-
-def load(model_path, name: str, device: Union[str, torch.device] = "cuda" if torch.cuda.is_available() else "cpu", 
-         jit=True, T=8, droppath=0., use_checkpoint=False, logger=None, use_cache=True, prompts_alpha=1e-1, prompts_layers=2, mit_layers=1,
-):
-    if not model_path:
-        model_path = clip._download(clip._MODELS[name])
-
-    try:
-        # loading JIT archive
-        model = torch.jit.load(model_path, map_location=device if jit else "cpu").eval()
-        # state_dict = None
-        state_dict = {"model": model.state_dict()}
-    except RuntimeError:
-        # loading saved state dict
-        if jit:
-            warnings.warn(f"File {model_path} is not a JIT archive. Loading as a state dict instead")
-            jit = False
-        state_dict = torch.load(model_path, map_location="cpu")
-
-    model = build_model(state_dict['model'] or model.state_dict(), T=T, droppath=droppath,
-                        use_checkpoint=use_checkpoint, logger=logger,
-                        prompts_alpha=prompts_alpha, 
-                        prompts_layers=prompts_layers,
-                        use_cache=use_cache,
-                        mit_layers=mit_layers,
-                        )
-    if str(device) == "cpu":
-        model.float()
-    return model, model.state_dict()
+        outputs = {
+            "y": logits,
+            "feature_v_raw": proj["video_raw"],
+            "feature_v_proj": v_features,
+            "feature_t": t_features,
+        }
+        return outputs
