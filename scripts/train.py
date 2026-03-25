@@ -84,31 +84,58 @@ def main(config, args):
     log_dir = os.path.join(config.OUTPUT, f"tensorboard_logs/split_{args.split_id}")
     writer = SummaryWriter(log_dir=log_dir)
 
-    _, _, _, train_loader, val_loader, _, _, train_loader_umil = build_dataloader(
+    _, _, _, _, _, _, _, train_loader_umil = build_dataloader(
         logger, config, train_keys=train_h5_keys_real, real_to_h5_map=real_to_h5,
     )
 
     model = build_umil_model(config, is_training=True, logger=logger)
-                         
+
     for param in model.visual.parameters():
         param.requires_grad = False
-    
+
     model = model.cuda()
 
     optimizer, _ = build_optimizer(config, model)
-    
-    # 核心修复：学习率调度器绑定实际运行的 loader 长度
+
+    if dist.is_initialized():
+        model = torch.nn.parallel.DistributedDataParallel(
+            model,
+            device_ids=[config.LOCAL_RANK],
+            broadcast_buffers=False,
+            find_unused_parameters=False
+        )
+
+    # ===== Zero-Train Baseline =====
+    if config.TRAIN.EPOCHS == 0:
+        init_ckpt_path = os.path.join(config.OUTPUT, f"init_model_split{args.split_id}.pth")
+        state_dict = model.module.state_dict() if dist.is_initialized() else model.state_dict()
+        torch.save({"model": state_dict}, init_ckpt_path)
+
+        from umil.engine.evaluator import VideoEvaluator
+        evaluator = VideoEvaluator(config, args.dataset, init_ckpt_path)
+
+        val_f1, val_div = evaluator.run(test_keys=val_h5_keys)
+        logger.info(f"[Zero-Train] Val F1: {val_f1:.4f} | Val Diversity: {val_div:.4f}")
+
+        test_f1, test_div = evaluator.run(test_keys=test_h5_keys)
+        logger.info(f"[Zero-Train] Test F1: {test_f1:.4f} | Test Diversity: {test_div:.4f}")
+        return
+
+    # 只有真正训练时才创建 scheduler / scaler
     lr_scheduler = build_scheduler(config, optimizer, len(train_loader_umil))
 
     use_amp = (config.TRAIN.OPT_LEVEL != 'O0')
     scaler = GradScaler(enabled=use_amp)
 
-    if dist.is_initialized():
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[config.LOCAL_RANK], broadcast_buffers=False, find_unused_parameters=False)
-
     start_epoch = 0
     if config.MODEL.RESUME:
-        start_epoch, _ = load_checkpoint(config, model.module if dist.is_initialized() else model, optimizer, lr_scheduler, logger)
+        start_epoch, _ = load_checkpoint(
+            config,
+            model.module if dist.is_initialized() else model,
+            optimizer,
+            lr_scheduler,
+            logger
+        )
 
     with open('labels/action_vocabulary.txt', 'r', encoding='utf-8') as f:
         action_classes = [line.strip() for line in f if line.strip()]
@@ -116,20 +143,20 @@ def main(config, args):
     text_labels = clip.tokenize(text_prompts).cuda()
 
     trainer = VideoTrainer(
-        config=config, 
-        args=args, 
-        model=model, 
-        optimizer=optimizer, 
-        lr_scheduler=lr_scheduler, 
-        train_loader=train_loader_umil, 
-        text_labels=text_labels, 
-        scaler=scaler, 
-        logger=logger, 
-        writer=writer, 
+        config=config,
+        args=args,
+        model=model,
+        optimizer=optimizer,
+        lr_scheduler=lr_scheduler,
+        train_loader=train_loader_umil,
+        text_labels=text_labels,
+        scaler=scaler,
+        logger=logger,
+        writer=writer,
         val_h5_keys=val_h5_keys,
         test_h5_keys=test_h5_keys
     )
-    
+
     trainer.run(start_epoch=start_epoch)
 
 

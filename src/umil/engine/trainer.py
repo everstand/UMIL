@@ -73,10 +73,18 @@ class VideoTrainer:
                 smoothed_logits_tc = smoothed_logits_transposed.transpose(1, 2)
                 
                 # 1. Top-M Mean Pooling
-                m = min(3, n_clips)
-                topm_logits, _ = torch.topk(smoothed_logits_tc, k=m, dim=1)   
-                bag_logits = topm_logits.mean(dim=1)                          
-                loss_mil = F.binary_cross_entropy_with_logits(bag_logits, labels)
+                # smoothed_logits_tc: [B, K, C]
+                B, K, C = smoothed_logits_tc.shape
+                bag_logits = []
+
+                for b in range(B):
+                    m_b = int(labels[b].sum().item())
+                    m_b = max(1, min(m_b, K))   # 至少 1，最多 K
+                    topm_b, _ = torch.topk(smoothed_logits_tc[b], k=m_b, dim=0)  # [m_b, C]
+                    bag_logits.append(topm_b.mean(dim=0))
+
+                bag_logits = torch.stack(bag_logits, dim=0)  # [B, C]
+                loss_mil = F.binary_cross_entropy_with_logits(bag_logits, labels.float())
                 
                 # 2. 稀疏性惩罚
                 prob_tc = torch.sigmoid(smoothed_logits_tc)  

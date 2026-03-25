@@ -93,6 +93,24 @@ class VideoEvaluator:
 
         self.h5_to_real, self.real_to_h5 = build_identity_maps(self.dataset_name, self.h5_path)
 
+    def _select_active_classes(self, video_logits, min_keep=1, max_keep=5, margin=1.5):
+        """
+        从整段视频的平均 logits 里选出“这个视频真正活跃的语义类”
+        不再让任意类别都能在某个窗口里靠 max 抢分。
+        """
+        video_level_scores = video_logits.mean(dim=0)   # [C]
+        max_score = torch.max(video_level_scores)
+
+        keep_mask = video_level_scores >= (max_score - margin)
+        keep_indices = torch.nonzero(keep_mask, as_tuple=False).squeeze(1)
+
+        if keep_indices.numel() < min_keep:
+            keep_indices = torch.topk(video_level_scores, k=min_keep).indices
+        elif keep_indices.numel() > max_keep:
+            keep_indices = torch.topk(video_level_scores, k=max_keep).indices
+
+        return keep_indices
+
     def _predict_video_scores(self, model, video_path, text_tokens):
         vr = decord.VideoReader(video_path)
         total_frames = len(vr)
@@ -136,39 +154,47 @@ class VideoEvaluator:
         video_features_raw = torch.cat(all_clip_features_raw, dim=0) 
         video_features_proj = torch.cat(all_clip_features_proj, dim=0)
 
+        # 先做时间平滑
+        video_logits_3d = video_logits.unsqueeze(0) 
+        smoothed_logits = self.smoothing_prior(video_logits_3d).squeeze(0)   # [N, C]
+        probs = torch.sigmoid(smoothed_logits)
+
+        # 关键修正：先从整段视频里选“活跃语义类”，再给每个窗口打分
+        active_idx = self._select_active_classes(video_logits, min_keep=1, max_keep=5, margin=1.5)
+        active_probs = probs[:, active_idx]   # [N, C_active]
+
         if self.ablation_mode == 'E0':
-            probs = torch.sigmoid(video_logits)
-            p_scores = torch.max(probs, dim=1)[0].cpu().numpy()
-            final_clip_scores = p_scores
-        else:
-            video_logits_3d = video_logits.unsqueeze(0) 
-            smoothed_logits = self.smoothing_prior(video_logits_3d).squeeze(0)
-            probs = torch.sigmoid(smoothed_logits)
+            # 不平滑对照组：仍然限定在活跃语义子空间里
+            raw_probs = torch.sigmoid(video_logits)
+            raw_active_probs = raw_probs[:, active_idx]
+            final_clip_scores = raw_active_probs.mean(dim=1).cpu().numpy()
 
-            if self.ablation_mode == 'E1':
-                p_scores = torch.max(probs, dim=1)[0].cpu().numpy()
+        elif self.ablation_mode == 'E1':
+            # 默认主模式：活跃类平均，不再对全词表 max
+            final_clip_scores = active_probs.mean(dim=1).cpu().numpy()
+
+        elif self.ablation_mode in ['E2', 'E3']:
+            k = min(self.k_classes, active_probs.shape[1])
+            topk_probs, _ = torch.topk(active_probs, k, dim=1)
+            p_scores = topk_probs.mean(dim=1).cpu().numpy()
+
+            if self.ablation_mode == 'E2':
                 final_clip_scores = p_scores
-            elif self.ablation_mode in ['E2', 'E3']:
-                k = min(self.k_classes, probs.shape[1])
-                topk_probs, _ = torch.topk(probs, k, dim=1)
-                p_scores = topk_probs.mean(dim=1).cpu().numpy()
 
-                if self.ablation_mode == 'E2':
-                    final_clip_scores = p_scores
-                elif self.ablation_mode == 'E3':
-                    if self.rep_space == 'raw':
-                        selected_features = video_features_raw
-                    elif self.rep_space == 'proj':
-                        selected_features = video_features_proj
-                    else:
-                        raise ValueError(f"Unknown R_t space configuration: {self.rep_space}")
-
-                    video_features_3d = selected_features.detach().unsqueeze(0)
-                    r_scores = self.rep_scorer(video_features_3d).squeeze(0).cpu().numpy()
-                    
-                    final_clip_scores = self.alpha * p_scores + (1.0 - self.alpha) * r_scores
+            elif self.ablation_mode == 'E3':
+                if self.rep_space == 'raw':
+                    selected_features = video_features_raw
+                elif self.rep_space == 'proj':
+                    selected_features = video_features_proj
                 else:
-                    raise ValueError(f"Unknown ablation mode: {self.ablation_mode}")
+                    raise ValueError(f"Unknown R_t space configuration: {self.rep_space}")
+
+                video_features_3d = selected_features.detach().unsqueeze(0)
+                r_scores = self.rep_scorer(video_features_3d).squeeze(0).cpu().numpy()
+                final_clip_scores = self.alpha * p_scores + (1.0 - self.alpha) * r_scores
+
+        else:
+            raise ValueError(f"Unknown ablation mode: {self.ablation_mode}")
 
         frame_scores = []
         for score, count in zip(final_clip_scores, clip_frame_counts):

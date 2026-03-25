@@ -1,60 +1,30 @@
-cutting food
-spreading butter or jam
-making a sandwich
-pouring liquid
-washing hands or dishes
-chewing and swallowing food
-using hand tools
-operating a car jack
-tightening or loosening tire nuts
-handling heavy tires
-pushing a stuck car
-digging dirt or snow
-attaching a tow rope
-driving a car
-stepping on car pedals
-waiting in a car
-grooming a pet
-washing a pet with water
-applying pet shampoo
-drying a pet with a towel
-petting an animal
-walking a dog on a leash
-feeding a pet
-a dog jumping through a hoop
-a dog sitting on command
-running or sprinting
-parkour jumping over obstacles
-climbing a wall
-rolling on the ground
-riding a BMX bike
-balancing on a bike
-falling down
-deploying a parachute
-wearing extreme sports gear
-scuba diving underwater
-swimming
-aiming and shooting a paintball gun
-swinging a mallet in bike polo
-sliding down a water slide
-marching in a parade
-dancing in a flash mob
-playing a musical instrument
-waving to a crowd
-holding a flag or banner
-clapping and cheering
-standing in a crowd
-talking to someone
-setting up dominoes
-lighting a fire
-walking around a tourist attraction
-looking up at a monument
-taking a picture or recording a video
-posing for a photo
-children playing and chasing
-climbing playground equipment
-operating airplane controls
-looking out an airplane window
-operating an excavator
-digging dirt with an excavator
-dumping dirt or rocks
+scenic landscape or beautiful view
+landmark or sightseeing moment
+crowd gathering or group scene
+people interacting or talking
+celebration or festive moment
+music or dance performance
+sports action or highlight play
+fast motion or stunt
+animal or pet activity
+children playing
+food preparation or eating
+travel or transportation scene
+vehicle activity
+water activity or swimming
+outdoor adventure
+object manipulation or hands-on activity
+interesting close-up object
+taking photos or recording video
+posing for the camera
+emotional or expressive moment
+surprising or unusual event
+playful interaction
+group activity or game
+ceremony or public event
+visually distinctive scene
+high visual motion
+scene transition or viewpoint change
+important interaction moment
+memorable highlight moment
+rare or attention-grabbing event
