@@ -10,6 +10,7 @@ MODEL:
   ARCH: ViT-B/32
   PRETRAINED: ""     
 TRAIN:
+  SALIENCY_ALPHA: 1.0
   BATCH_SIZE: 1      # 【瘦身】端到端读视频，Batch Size 设为 1
   BATCH_SIZE_UMIL: 1 # 【瘦身】同上
   EPOCHS: 50

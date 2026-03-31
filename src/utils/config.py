@@ -53,6 +53,9 @@ _C.TRAIN.USE_CHECKPOINT = False
 _C.TRAIN.W_SPARSE = 0.005
 _C.TRAIN.W_TV = 0.05
 _C.TRAIN.W_PEAK = 0.1
+_C.TRAIN.SALIENCY_ALPHA = 1.0
+_C.TRAIN.W_SAL = 0.1
+_C.TRAIN.SAL_TAU = 1.0
 
 # -----------------------------------------------------------------------------
 # Augmentation settings

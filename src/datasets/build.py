@@ -259,9 +259,8 @@ class FrameDataset(BaseDataset):
 
     def load_annotations(self):
         """加载视频路径和对应的 Multi-hot 标签"""
-        vid = 0
         video_infos = []
-
+        vid = 0
         with open(self.ann_file, 'r') as fin:
             for line in fin:
                 filename = line.strip()

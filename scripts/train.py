@@ -84,9 +84,17 @@ def main(config, args):
     log_dir = os.path.join(config.OUTPUT, f"tensorboard_logs/split_{args.split_id}")
     writer = SummaryWriter(log_dir=log_dir)
 
-    _, _, _, _, _, _, _, train_loader_umil = build_dataloader(
+    train_data, _, _, _, _, _, _, train_loader_umil = build_dataloader(
         logger, config, train_keys=train_h5_keys_real, real_to_h5_map=real_to_h5,
     )
+
+    vid_to_prior_key = {}
+    for item in train_data.video_infos:
+        raw_vid = int(item["vid"])
+        real_name = os.path.basename(item["filename"]).split('.')[0]
+        prior_key = real_name.replace('_fixed', '') if real_name.endswith('_fixed') else real_name
+        vid_to_prior_key[raw_vid] = prior_key
+
 
     model = build_umil_model(config, is_training=True, logger=logger)
 
@@ -154,7 +162,8 @@ def main(config, args):
         logger=logger,
         writer=writer,
         val_h5_keys=val_h5_keys,
-        test_h5_keys=test_h5_keys
+        test_h5_keys=test_h5_keys,
+        vid_to_prior_key=vid_to_prior_key
     )
 
     trainer.run(start_epoch=start_epoch)

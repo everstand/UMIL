@@ -218,7 +218,7 @@ class VideoEvaluator:
         model = build_umil_model(self.config, state_dict=new_state_dict, is_training=False, logger=logger).to(self.device)
         model.eval()
 
-        text_prompts = [f"A video of a person {action}" for action in self.candidate_actions]
+        text_prompts = [f"A video segment showing {action}" for action in self.candidate_actions]
         text_tokens = clip.tokenize(text_prompts).to(self.device)
         
         f1_meter = AverageMeter()

@@ -10,9 +10,12 @@ MODEL:
   ARCH: ViT-B/32
   PRETRAINED: ""     
 TRAIN:
+  SALIENCY_ALPHA: 2.0
   BATCH_SIZE: 1      # 【瘦身】端到端读视频，Batch Size 设为 1
   BATCH_SIZE_UMIL: 1 # 【瘦身】同上
   EPOCHS: 50
   OPT_LEVEL: O1      # 使用原生 AMP 时，O1 对应混合精度开启
   USE_CHECKPOINT: True # 【核心瘦身】开启梯度检查点，用时间换空间，省出一半显存！
   ACCUMULATION_STEPS: 4 # 因为 Batch Size 变成了1，我们累加 4 次梯度再更新，等效于 Batch Size = 4
+  W_SAL: 0.1
+  SAL_TAU: 1.0
