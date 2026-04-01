@@ -20,7 +20,8 @@ _C.DATA.NUM_CLIPS = 16
 _C.DATA.NUM_FRAMES = 5
 _C.DATA.FRAME_INTERVAL = 6
 _C.DATA.NUM_CLASSES = 400
-_C.DATA.LABEL_LIST = 'labels/action_vocabulary.txt'
+_C.DATA.LABEL_LIST = ''
+_C.DATA.PROMPT_VOCAB = ''
 _C.DATA.FILENAME_TMPL = 'img_{:08}.jpg'
 
 # -----------------------------------------------------------------------------
@@ -38,7 +39,7 @@ _C.MODEL.FIX_TEXT = True
 # -----------------------------------------------------------------------------
 _C.TRAIN = CN()
 _C.TRAIN.EPOCHS = 40
-_C.TRAIN.WARMUP_EPOCHS = 5
+_C.TRAIN.WARMUP_EPOCHS = 1
 _C.TRAIN.WEIGHT_DECAY = 0.001
 _C.TRAIN.LR = 8.e-6
 _C.TRAIN.BATCH_SIZE = 8

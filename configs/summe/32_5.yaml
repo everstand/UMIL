@@ -2,7 +2,8 @@ DATA:
   ROOT: ""  
   TRAIN_FILE: "labels/summe_train_list.txt"  
   VAL_FILE: "labels/summe_train_list.txt"    
-  LABEL_LIST: "labels/summe_multihot_labels.npy"  
+  LABEL_LIST: "labels/summe_multihot_labels.npy"
+  PROMPT_VOCAB: "labels/summe_prompt_vocabulary.txt"
   NUM_FRAMES: 16     # 【瘦身】从32降到16，大幅减少序列长度带来的显存爆炸
   NUM_CLASSES: 45    
   FRAME_INTERVAL: 2  
@@ -19,3 +20,6 @@ TRAIN:
   ACCUMULATION_STEPS: 4 # 因为 Batch Size 变成了1，我们累加 4 次梯度再更新，等效于 Batch Size = 4
   W_SAL: 0.1
   SAL_TAU: 1.0
+  W_TV: 0.2
+  W_PEAK: 0.3
+  WARMUP_EPOCHS: 0

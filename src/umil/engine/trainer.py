@@ -53,7 +53,6 @@ class VideoTrainer:
         self.vid_to_prior_key = vid_to_prior_key or {}
 
         self.use_amp = (config.TRAIN.OPT_LEVEL != 'O0')
-        self.last_sal_avg = 0.0
 
         if args.dataset == "summe":
             prior_path = "labels/summe_saliency_priors.npy"
@@ -79,7 +78,6 @@ class VideoTrainer:
         meter_tot_raw = AverageMeter()
         meter_tot_scaled = AverageMeter()
         meter_mil = AverageMeter()
-        meter_sal = AverageMeter()
         meter_sparse = AverageMeter()
         meter_tv = AverageMeter()
         meter_peak = AverageMeter()
@@ -132,62 +130,7 @@ class VideoTrainer:
                 bag_logits = torch.stack(bag_logits, dim=0)  # [B, C]
                 loss_mil = F.binary_cross_entropy_with_logits(bag_logits, labels.float())
 
-                # =====================================================
-                # 2) 显著性正则：约束正类时间响应分布贴近 saliency prior
-                # =====================================================
-                w_sal = getattr(self.config.TRAIN, "W_SAL", 0.1)
-                sal_tau = getattr(self.config.TRAIN, "SAL_TAU", 1.0)
-
-                loss_sal = torch.tensor(
-                    0.0,
-                    device=smoothed_logits_tc.device,
-                    dtype=smoothed_logits_tc.dtype
-                )
-                sal_count = 0
-
-                for b in range(B):
-                    raw_vid = batch_data["vid"][b]
-                    if torch.is_tensor(raw_vid):
-                        raw_vid = int(raw_vid.item())
-                    else:
-                        raw_vid = int(raw_vid)
-
-                    prior_key = self.vid_to_prior_key.get(raw_vid, None)
-                    prior_np = self.saliency_priors.get(prior_key, None)
-                    if prior_np is None:
-                        continue
-
-                    prior = torch.as_tensor(
-                        prior_np,
-                        device=smoothed_logits_tc.device,
-                        dtype=smoothed_logits_tc.dtype
-                    ).flatten()
-
-                    if prior.numel() != K:
-                        prior = F.interpolate(
-                            prior.unsqueeze(0).unsqueeze(0),
-                            size=K,
-                            mode='linear',
-                            align_corners=False
-                        ).squeeze(0).squeeze(0)
-
-                    prior = torch.clamp(prior, min=1e-6)
-                    q = prior / prior.sum()   # [K]
-
-                    pos_cls = torch.nonzero(labels[b] > 0, as_tuple=False).squeeze(1)
-                    if pos_cls.numel() == 0:
-                        continue
-
-                    for c in pos_cls.tolist():
-                        # 模型对正类 c 的时间响应分布
-                        p = torch.softmax(smoothed_logits_tc[b, :, c] / sal_tau, dim=0)  # [K]
-
-                        # KL(q || p)
-                        loss_sal = loss_sal + torch.sum(q * (torch.log(q) - torch.log(p + 1e-6)))
-                        sal_count += 1
-
-                if sal_count > 0:
-                    loss_sal = loss_sal / sal_count
+        
 
                 # =====================================================
                 # 3) 其余辅助量：先算、先记，但暂不进总损失
@@ -204,10 +147,10 @@ class VideoTrainer:
                 pos_attn = pos_attn / pos_attn.sum(dim=1, keepdim=True).clamp_min(1e-6)
                 loss_peak = (pos_attn.pow(2).sum(dim=1) * labels).sum() / labels.sum().clamp_min(1.0)
 
-                # =====================================================
-                # 4) 总损失：当前只用 MIL + Saliency Regularizer
-                # =====================================================
-                loss_tot_raw = loss_mil + w_sal * loss_sal
+                # 4) 总损失：当前使用 MIL + TV + Peak
+                w_tv = getattr(self.config.TRAIN, "W_TV", 0.05)
+                w_peak = getattr(self.config.TRAIN, "W_PEAK", 0.1)
+                loss_tot_raw = loss_mil + w_tv * loss_tv + w_peak * loss_peak
                 loss_tot_scaled = loss_tot_raw / acc_steps
 
             self.scaler.scale(loss_tot_scaled).backward()
@@ -226,7 +169,6 @@ class VideoTrainer:
             meter_tot_raw.update(loss_tot_raw.item(), bz)
             meter_tot_scaled.update(loss_tot_scaled.item(), bz)
             meter_mil.update(loss_mil.item(), bz)
-            meter_sal.update(loss_sal.item() if sal_count > 0 else 0.0, bz)
             meter_sparse.update(loss_sparse.item(), bz)
             meter_tv.update(loss_tv.item(), bz)
             meter_peak.update(loss_peak.item(), bz)
@@ -241,13 +183,11 @@ class VideoTrainer:
                     f'lr {lr:.6f}\t'
                     f'Tot(Raw) {meter_tot_raw.val:.4f} ({meter_tot_raw.avg:.4f})\t'
                     f'MIL {meter_mil.val:.4f} ({meter_mil.avg:.4f})\t'
-                    f'Sal {meter_sal.val:.4f} ({meter_sal.avg:.4f})\t'
                     f'Sparse {meter_sparse.val:.4f} ({meter_sparse.avg:.4f})\t'
                     f'TV {meter_tv.val:.4f} ({meter_tv.avg:.4f})\t'
                     f'Peak {meter_peak.val:.4f} ({meter_peak.avg:.4f})'
                 )
 
-        self.last_sal_avg = meter_sal.avg
         return meter_tot_raw.avg, meter_mil.avg, meter_sparse.avg, meter_tv.avg, meter_peak.avg
 
     def run(self, start_epoch):
@@ -261,7 +201,6 @@ class VideoTrainer:
 
             self.writer.add_scalar('Loss/Total_Raw', tot_raw, epoch)
             self.writer.add_scalar('Loss/MIL', mil, epoch)
-            self.writer.add_scalar('Loss/Sal', self.last_sal_avg, epoch)
             self.writer.add_scalar('Loss/Sparse', sparse, epoch)
             self.writer.add_scalar('Loss/TV', tv, epoch)
             self.writer.add_scalar('Loss/Peak', peak, epoch)

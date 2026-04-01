@@ -64,24 +64,31 @@ class VideoEvaluator:
         self.dataset_name = dataset_name.lower()
         self.checkpoint_path = checkpoint_path
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        
+
         eval_cfg = getattr(config, 'EVAL', None)
         self.ablation_mode = getattr(eval_cfg, 'ABLATION_MODE', 'E1') if eval_cfg else 'E1'
-        self.k_classes     = int(getattr(eval_cfg, 'TOP_K', 3)) if eval_cfg else 3
-        self.alpha         = float(getattr(eval_cfg, 'ALPHA', 0.5)) if eval_cfg else 0.5
-        self.rep_space     = getattr(eval_cfg, 'REP_SPACE', 'raw') if eval_cfg else 'raw'
-        
-        logger.info(f"Initialize evaluator | Mode: {self.ablation_mode} | K: {self.k_classes} | Alpha: {self.alpha} | R_t Space: {self.rep_space}")
+        self.k_classes = int(getattr(eval_cfg, 'TOP_K', 3)) if eval_cfg else 3
+        self.alpha = float(getattr(eval_cfg, 'ALPHA', 0.5)) if eval_cfg else 0.5
+        self.rep_space = getattr(eval_cfg, 'REP_SPACE', 'raw') if eval_cfg else 'raw'
 
-        vocab_path = 'labels/action_vocabulary.txt'
-        if not os.path.exists(vocab_path):
-            raise FileNotFoundError(f"Missing vocabulary file: {vocab_path}")
-        with open(vocab_path, 'r', encoding='utf-8') as f:
-            self.candidate_actions = [line.strip() for line in f if line.strip()]
+        logger.info(
+            f"Initialize evaluator | Mode: {self.ablation_mode} | "
+            f"K: {self.k_classes} | Alpha: {self.alpha} | R_t Space: {self.rep_space}"
+        )
+
+        prompt_vocab_path = self.config.DATA.PROMPT_VOCAB
+        if not os.path.exists(prompt_vocab_path):
+            raise FileNotFoundError(f"Missing prompt vocabulary file: {prompt_vocab_path}")
+
+        with open(prompt_vocab_path, 'r', encoding='utf-8') as f:
+            self.text_prompts = [line.strip() for line in f if line.strip()]
+
+        if len(self.text_prompts) == 0:
+            raise ValueError(f"Empty prompt vocabulary file: {prompt_vocab_path}")
 
         self.smoothing_prior = TemporalSmoothingPrior(kernel_size=3).to(self.device)
         self.rep_scorer = RepresentationPrior().to(self.device)
-        
+
         if self.dataset_name == 'summe':
             self.h5_path = "data/eccv16_datasets/eccv16_dataset_summe_google_pool5.h5"
             self.video_dir = "data/SumMe/videos"
@@ -92,6 +99,8 @@ class VideoEvaluator:
             raise ValueError(f"Unsupported dataset: {dataset_name}")
 
         self.h5_to_real, self.real_to_h5 = build_identity_maps(self.dataset_name, self.h5_path)
+
+      
 
     def _select_active_classes(self, video_logits, min_keep=1, max_keep=5, margin=1.5):
         """
@@ -218,8 +227,7 @@ class VideoEvaluator:
         model = build_umil_model(self.config, state_dict=new_state_dict, is_training=False, logger=logger).to(self.device)
         model.eval()
 
-        text_prompts = [f"A video segment showing {action}" for action in self.candidate_actions]
-        text_tokens = clip.tokenize(text_prompts).to(self.device)
+        text_tokens = clip.tokenize(self.text_prompts).to(self.device)
         
         f1_meter = AverageMeter()
         div_meter = AverageMeter() 

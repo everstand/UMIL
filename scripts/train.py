@@ -1,5 +1,6 @@
 import os
 import sys
+import math
 
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="mmcv")
@@ -129,8 +130,8 @@ def main(config, args):
         logger.info(f"[Zero-Train] Test F1: {test_f1:.4f} | Test Diversity: {test_div:.4f}")
         return
 
-    # 只有真正训练时才创建 scheduler / scaler
-    lr_scheduler = build_scheduler(config, optimizer, len(train_loader_umil))
+    actual_updates_per_epoch = math.ceil(len(train_loader_umil) / config.TRAIN.ACCUMULATION_STEPS)
+    lr_scheduler = build_scheduler(config, optimizer, actual_updates_per_epoch)
 
     use_amp = (config.TRAIN.OPT_LEVEL != 'O0')
     scaler = GradScaler(enabled=use_amp)
@@ -145,9 +146,16 @@ def main(config, args):
             logger
         )
 
-    with open('labels/action_vocabulary.txt', 'r', encoding='utf-8') as f:
-        action_classes = [line.strip() for line in f if line.strip()]
-    text_prompts = [f"A video of a person {action}" for action in action_classes]
+    prompt_vocab_path = config.DATA.PROMPT_VOCAB
+    if not os.path.exists(prompt_vocab_path):
+        raise FileNotFoundError(f"Prompt vocabulary file not found: {prompt_vocab_path}")
+
+    with open(prompt_vocab_path, 'r', encoding='utf-8') as f:
+        text_prompts = [line.strip() for line in f if line.strip()]
+
+    if len(text_prompts) == 0:
+        raise ValueError(f"Empty prompt vocabulary file: {prompt_vocab_path}")
+
     text_labels = clip.tokenize(text_prompts).cuda()
 
     trainer = VideoTrainer(

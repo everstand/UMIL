@@ -2,12 +2,18 @@ import torch
 from timm.scheduler.cosine_lr import CosineLRScheduler
 
 def fix_text(model):
-    """
-    冻结文本编码器的物理契约
-    遍历模型参数，将属于 text 端（或被明确要求冻结）的参数梯度截断
-    """
+    text_prefixes = (
+        "token_embedding.",
+        "transformer.",
+        "ln_final.",
+    )
+    text_exact = {
+        "text_projection",
+        "positional_embedding",
+    }
+
     for name, param in model.named_parameters():
-        if "token_embedding" in name or "transformer" in name or "text_projection" in name or "ln_final" in name or "positional_embedding" in name:
+        if name.startswith(text_prefixes) or name in text_exact:
             param.requires_grad = False
 
 def build_optimizer(config, model):
@@ -18,7 +24,10 @@ def build_optimizer(config, model):
     base_model = model.module if hasattr(model, 'module') else model
 
     # 1. 严格执行冻结契约 (如果配置要求冻结文本端)
-    if getattr(config.MODEL, 'FIX_TEXT', True):
+    active_params = [p for p in base_model.parameters() if p.requires_grad]
+    if len(active_params) == 0:
+        raise ValueError("No trainable parameters remain after freezing.")
+    if getattr(config.MODEL, 'FIX_TEXT', True): 
         fix_text(base_model)
 
     # 2. 探针：仅收集计算图中真正需要求导的活跃节点
